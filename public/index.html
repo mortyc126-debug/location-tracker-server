@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multi-Device Location Tracker</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; }
+        .container { display: flex; height: 100vh; }
+        .sidebar { width: 300px; background: #f5f5f5; padding: 20px; overflow-y: auto; }
+        .map-container { flex: 1; }
+        #map { height: 100%; }
+        .device-item { 
+            background: white; margin: 10px 0; padding: 15px; 
+            border-radius: 8px; cursor: pointer; border: 2px solid transparent;
+        }
+        .device-item:hover { border-color: #4CAF50; }
+        .device-item.active { border-color: #2196F3; background: #e3f2fd; }
+        .device-name { font-weight: bold; color: #333; }
+        .device-info { color: #666; font-size: 12px; margin-top: 5px; }
+        .login-form { 
+            position: fixed; top: 50%; left: 50%; 
+            transform: translate(-50%, -50%);
+            background: white; padding: 30px; 
+            border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            z-index: 1000;
+        }
+        .hidden { display: none; }
+        .controls { padding: 15px; background: #333; color: white; }
+        .status-online { color: #4CAF50; }
+        .status-offline { color: #f44336; }
+        input, button { 
+            padding: 10px; margin: 5px 0; border: 1px solid #ccc; 
+            border-radius: 5px; width: 100%; box-sizing: border-box;
+        }
+        button { 
+            background: #4CAF50; color: white; border: none; cursor: pointer;
+        }
+        button:hover { background: #45a049; }
+        .device-colors { display: flex; gap: 5px; margin-top: 10px; }
+        .color-dot { width: 12px; height: 12px; border-radius: 50%; }
+    </style>
+</head>
+<body>
+    <div id="loginForm" class="login-form">
+        <h2>Multi-Device Tracker Access</h2>
+        <input type="password" id="passwordInput" placeholder="Enter password">
+        <button onclick="login()">Login</button>
+        <div id="loginError" style="color: red; margin-top: 10px;"></div>
+    </div>
+
+    <div id="mainApp" class="hidden">
+        <div class="container">
+            <div class="sidebar">
+                <div class="controls">
+                    <h3>Devices</h3>
+                    <button onclick="refreshDevices()">Refresh</button>
+                    <button onclick="showAllDevices()">Show All</button>
+                    <button onclick="clearTracks()">Clear Tracks</button>
+                </div>
+                <div id="devicesList"></div>
+            </div>
+            
+            <div class="map-container">
+                <div id="map"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let map;
+        let devicesData = new Map();
+        let deviceLayers = new Map();
+        let currentPassword = '';
+        let updateInterval;
+        let selectedDeviceId = null;
+
+        const deviceColors = [
+            '#FF5722', '#2196F3', '#4CAF50', '#FF9800', 
+            '#9C27B0', '#795548', '#607D8B', '#E91E63'
+        ];
+
+        function login() {
+            const password = document.getElementById('passwordInput').value;
+            currentPassword = password;
+            
+            fetch(`/api/devices/${password}`)
+                .then(response => {
+                    if (response.ok) {
+                        document.getElementById('loginForm').classList.add('hidden');
+                        document.getElementById('mainApp').classList.remove('hidden');
+                        initMap();
+                        loadDevices();
+                        startAutoUpdate();
+                    } else {
+                        document.getElementById('loginError').textContent = 'Wrong password!';
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('loginError').textContent = 'Connection error!';
+                });
+        }
+
+        function initMap() {
+            map = L.map('map').setView([55.7558, 37.6176], 10);
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+        }
+
+        function loadDevices() {
+            fetch(`/api/devices/${currentPassword}`)
+                .then(response => response.json())
+                .then(devices => {
+                    updateDevicesList(devices);
+                    if (selectedDeviceId) {
+                        loadDeviceData(selectedDeviceId);
+                    } else if (devices.length > 0) {
+                        showAllDevices();
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        function updateDevicesList(devices) {
+            const list = document.getElementById('devicesList');
+            list.innerHTML = '';
+            
+            devices.forEach((device, index) => {
+                const div = document.createElement('div');
+                div.className = `device-item ${selectedDeviceId === device.device_id ? 'active' : ''}`;
+                div.onclick = () => selectDevice(device.device_id);
+                
+                const lastSeen = device.last_seen ? 
+                    new Date(device.last_seen).toLocaleString() : 'Never';
+                const isOnline = device.last_seen && 
+                    (Date.now() - device.last_seen) < 300000; // 5 минут
+                
+                const color = deviceColors[index % deviceColors.length];
+                
+                div.innerHTML = `
+                    <div class="device-name" style="color: ${color}">
+                        ${device.device_name}
+                    </div>
+                    <div class="device-info">
+                        <span class="${isOnline ? 'status-online' : 'status-offline'}">
+                            ● ${isOnline ? 'Online' : 'Offline'}
+                        </span><br>
+                        Last seen: ${lastSeen}<br>
+                        Points: ${device.location_count}
+                    </div>
+                    <div class="color-dot" style="background: ${color}"></div>
+                `;
+                
+                list.appendChild(div);
+            });
+        }
+
+        function selectDevice(deviceId) {
+            selectedDeviceId = deviceId;
+            clearMap();
+            loadDeviceData(deviceId);
+            
+            // Обновляем активный элемент
+            document.querySelectorAll('.device-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            event.currentTarget.classList.add('active');
+        }
+
+        function loadDeviceData(deviceId) {
+            fetch(`/api/device/${deviceId}/${currentPassword}`)
+                .then(response => response.json())
+                .then(data => {
+                    displayDeviceOnMap(data, deviceId);
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        function displayDeviceOnMap(deviceData, deviceId) {
+            if (deviceData.locations.length === 0) return;
+
+            const colorIndex = Array.from(devicesData.keys()).indexOf(deviceId);
+            const color = deviceColors[colorIndex % deviceColors.length];
+
+            // Создаем линию маршрута
+            const latLngs = deviceData.locations.map(loc => [loc.latitude, loc.longitude]);
+            const routeLine = L.polyline(latLngs, {color: color, weight: 3}).addTo(map);
+
+            // Маркер последней позиции
+            const lastLocation = deviceData.locations[deviceData.locations.length - 1];
+            const marker = L.marker([lastLocation.latitude, lastLocation.longitude])
+                .addTo(map)
+                .bindPopup(`
+                    <b>${deviceData.device_name}</b><br>
+                    Last seen: ${new Date(lastLocation.timestamp).toLocaleString()}<br>
+                    Accuracy: ${lastLocation.accuracy}m
+                `);
+
+            // Сохраняем слои для устройства
+            deviceLayers.set(deviceId, { routeLine, marker });
+            devicesData.set(deviceId, deviceData);
+
+            map.fitBounds(routeLine.getBounds());
+        }
+
+        function showAllDevices() {
+            selectedDeviceId = null;
+            clearMap();
+            
+            fetch(`/api/devices/${currentPassword}`)
+                .then(response => response.json())
+                .then(devices => {
+                    devices.forEach(device => {
+                        if (device.location_count > 0) {
+                            loadDeviceData(device.device_id);
+                        }
+                    });
+                });
+
+            // Убираем активный класс
+            document.querySelectorAll('.device-item').forEach(item => {
+                item.classList.remove('active');
+            });
+        }
+
+        function clearMap() {
+            deviceLayers.forEach(layers => {
+                if (layers.routeLine) map.removeLayer(layers.routeLine);
+                if (layers.marker) map.removeLayer(layers.marker);
+            });
+            deviceLayers.clear();
+        }
+
+        function clearTracks() {
+            clearMap();
+        }
+
+        function refreshDevices() {
+            loadDevices();
+        }
+
+        function startAutoUpdate() {
+            updateInterval = setInterval(() => {
+                loadDevices();
+            }, 10000); // Обновление каждые 10 секунд
+        }
+    </script>
+</body>
+</html>
