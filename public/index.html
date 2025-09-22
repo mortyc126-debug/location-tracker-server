@@ -9,7 +9,6 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a1a; color: #fff; }
-        
         .login-container {
             height: 100vh;
             display: flex;
@@ -17,354 +16,154 @@
             justify-content: center;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
-        
         .login-form {
             background: rgba(255,255,255,0.95);
             padding: 40px;
             border-radius: 15px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             width: 350px;
-        }
-        
-        .login-form h2 { color: #333; margin-bottom: 30px; text-align: center; }
-        
-        .form-group { margin-bottom: 20px; }
-        
-        .form-group input {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 14px;
-            transition: border-color 0.3s;
-        }
-        
-        .form-group input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        .login-btn {
-            width: 100%;
-            padding: 12px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        
-        .error-msg {
-            color: #e74c3c;
             text-align: center;
-            margin-top: 15px;
-            font-size: 14px;
         }
-        
-        .hidden { display: none !important; }
-        
-        .main-container {
-            display: flex;
-            height: 100vh;
+        .login-form input {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            font-size: 16px;
         }
-        
-        .sidebar {
-            width: 380px;
-            background: #2a2a2a;
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .sidebar-header {
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-bottom: 1px solid #444;
-        }
-        
-        .sidebar-header h3 { margin-bottom: 15px; }
-        
-        .control-buttons {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 15px;
-        }
-        
-        .btn {
-            padding: 8px;
-            background: rgba(255,255,255,0.1);
-            border: 1px solid rgba(255,255,255,0.2);
-            color: white;
-            border-radius: 5px;
+        .login-form button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            background: #667eea;
+            color: #fff;
+            border-radius: 8px;
+            font-size: 18px;
             cursor: pointer;
             transition: background 0.3s;
         }
-        
-        .btn:hover { background: rgba(255,255,255,0.2); }
-        
-        .btn-full { grid-column: span 2; }
-        
-        .date-picker {
-            width: 100%;
-            padding: 10px;
-            background: rgba(255,255,255,0.1);
-            border: 1px solid rgba(255,255,255,0.2);
-            color: white;
-            border-radius: 5px;
-            margin-bottom: 10px;
+        .login-form button:hover {
+            background: #5a6de0;
         }
-        
-        .tabs {
+        .login-form .error-message {
+            color: red;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        .hidden { display: none; }
+        #app {
             display: flex;
-            border-bottom: 1px solid #444;
+            height: 100vh;
+            overflow: hidden;
         }
-        
-        .tab {
-            flex: 1;
-            padding: 12px;
-            background: transparent;
-            border: none;
-            color: #999;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        
-        .tab.active {
-            color: white;
-            border-bottom: 2px solid #667eea;
-        }
-        
-        .tab-content {
-            flex: 1;
-            overflow-y: auto;
+        #sidebar {
+            width: 300px;
+            background: #252525;
+            display: flex;
+            flex-direction: column;
             padding: 20px;
+            overflow-y: auto;
         }
-        
+        #deviceList {
+            flex-grow: 1;
+        }
+        #map {
+            flex-grow: 1;
+            background: #333;
+        }
         .device-card {
             background: #333;
             border-radius: 10px;
             padding: 15px;
-            margin-bottom: 15px;
-            cursor: pointer;
-            transition: all 0.3s;
-            border: 2px solid transparent;
-        }
-        
-        .device-card:hover {
-            background: #3a3a3a;
-            border-color: #667eea;
-        }
-        
-        .device-card.active {
-            background: #3a3a3a;
-            border-color: #764ba2;
-        }
-        
-        .device-name {
-            font-weight: bold;
-            font-size: 16px;
-            margin-bottom: 8px;
-        }
-        
-        .device-status {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 5px;
-        }
-        
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-        
-        .status-online { background: #4CAF50; }
-        .status-offline { background: #f44336; }
-        
-        .device-info {
-            font-size: 12px;
-            color: #999;
-            line-height: 1.6;
-        }
-        
-        .history-item {
-            background: #333;
-            border-radius: 8px;
-            padding: 12px;
             margin-bottom: 10px;
             cursor: pointer;
-            transition: all 0.3s;
+            transition: background 0.2s;
         }
-        
-        .history-item:hover {
-            background: #3a3a3a;
-            transform: translateX(5px);
+        .device-card:hover, .device-card.active {
+            background: #444;
         }
-        
-        .history-date {
-            font-weight: bold;
-            color: #667eea;
-            margin-bottom: 5px;
+        .device-card h4 { margin: 0; font-size: 16px; }
+        .device-card p { margin: 5px 0 0; font-size: 12px; opacity: 0.7; }
+        .device-card .location-info { font-size: 14px; font-weight: bold; margin-top: 10px; }
+        .battery-icon { font-size: 14px; margin-right: 5px; }
+        .last-updated { font-size: 10px; opacity: 0.5; margin-top: 5px; }
+        .tab-bar {
+            display: flex;
+            margin-bottom: 20px;
         }
-        
-        .history-stats {
-            font-size: 12px;
-            color: #999;
-        }
-        
-        .map-container {
+        .tab-bar button {
             flex: 1;
-            position: relative;
-        }
-        
-        #map { height: 100%; }
-        
-        .map-controls {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-            background: rgba(42, 42, 42, 0.9);
-            padding: 15px;
-            border-radius: 8px;
-            backdrop-filter: blur(10px);
-        }
-        
-        .map-info {
-            margin-bottom: 10px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #444;
-        }
-        
-        .map-info h4 {
-            margin-bottom: 5px;
-            color: #667eea;
-        }
-        
-        .map-info p {
-            font-size: 12px;
-            color: #999;
-            margin: 2px 0;
-        }
-        
-        .playback-controls {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-        }
-        
-        .play-btn {
-            padding: 5px 10px;
-            background: #4CAF50;
-            color: white;
+            padding: 10px;
             border: none;
-            border-radius: 4px;
+            background: #444;
+            color: #fff;
             cursor: pointer;
+            border-bottom: 3px solid transparent;
+            font-size: 16px;
+            transition: border-bottom 0.2s;
         }
-        
-        .speed-control {
+        .tab-bar button.active {
+            border-bottom: 3px solid #667eea;
+            background: #555;
+        }
+        #settings-page { padding: 20px; display: none; }
+        #settings-page h2 { margin-bottom: 20px; }
+        #settings-page label { display: block; margin-top: 10px; }
+        #settings-page input, #settings-page button { width: 100%; padding: 10px; margin-top: 5px; }
+        #settings-page button { background: #667eea; color: #fff; border: none; cursor: pointer; }
+        .navbar {
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 5px;
-            margin-top: 10px;
+            padding: 10px;
+            background: #252525;
+            border-bottom: 1px solid #333;
         }
-        
-        .speed-control input {
-            width: 100px;
-        }
-        
-        .logout-btn {
-            position: absolute;
-            top: 20px;
-            left: 400px;
-            z-index: 1000;
-            background: #e74c3c;
-            color: white;
-            padding: 8px 15px;
+        .navbar .title { font-size: 24px; font-weight: bold; }
+        .navbar .logout-btn {
+            background: none;
             border: none;
-            border-radius: 5px;
+            color: #ff6347;
             cursor: pointer;
-        }
-        
-        .route-popup {
-            font-size: 12px;
-        }
-        
-        .route-popup .time {
-            font-weight: bold;
-            color: #667eea;
-        }
-        
-        .route-popup .location {
-            color: #666;
-            margin-top: 4px;
-        }
-        
-        .route-popup .speed {
-            color: #4CAF50;
-            margin-top: 4px;
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
+
     <div id="loginContainer" class="login-container">
         <div class="login-form">
-            <h2>🔒 Secure Access</h2>
-            <div class="form-group">
-                <input type="text" id="username" placeholder="Username" autocomplete="off">
-            </div>
-            <div class="form-group">
-                <input type="password" id="password" placeholder="Password" autocomplete="off">
-            </div>
-            <button class="login-btn" onclick="login()">LOGIN</button>
-            <div id="errorMsg" class="error-msg hidden"></div>
+            <h2>Admin Login</h2>
+            <input type="text" id="username" placeholder="Username" value="admin">
+            <input type="password" id="password" placeholder="Password">
+            <button onclick="login()">Login</button>
+            <p id="loginError" class="error-message"></p>
         </div>
     </div>
 
-    <div id="mainApp" class="main-container hidden">
-        <div class="sidebar">
-            <div class="sidebar-header">
-                <h3>📍 Tracking System</h3>
-                <div class="control-buttons">
-                    <button class="btn" onclick="refreshDevices()">↻ Refresh</button>
-                    <button class="btn" onclick="showAllDevices()">👁 Show All</button>
-                    <button class="btn" onclick="clearMap()">🗑 Clear</button>
-                    <button class="btn" onclick="exportData()">📥 Export</button>
-                </div>
-                <input type="text" id="datePicker" class="date-picker" placeholder="Select date range">
-            </div>
-            
-            <div class="tabs">
-                <button class="tab active" onclick="switchTab('devices')">Devices</button>
-                <button class="tab" onclick="switchTab('history')">History</button>
-            </div>
-            
-            <div class="tab-content">
-                <div id="devicesTab" class="devices-list"></div>
-                <div id="historyTab" class="history-list hidden"></div>
+    <div id="mainApp" class="hidden">
+        <div class="navbar">
+            <div class="title">GPS Tracker</div>
+            <div class="navbar-buttons">
+                <button class="logout-btn" onclick="logout()">Logout</button>
             </div>
         </div>
-        
-        <div class="map-container">
-            <button class="logout-btn" onclick="logout()">Logout</button>
-            <div class="map-controls">
-                <div class="map-info">
-                    <h4 id="infoTitle">No device selected</h4>
-                    <p id="infoDate">-</p>
-                    <p id="infoPoints">Points: 0</p>
-                    <p id="infoDistance">Distance: 0 km</p>
+
+        <div id="app">
+            <div id="sidebar">
+                <div class="tab-bar">
+                    <button id="devicesTab" class="active" onclick="showTab('devices')">Devices</button>
+                    <button id="settingsTab" onclick="showTab('settings')">Settings</button>
                 </div>
-                <div class="playback-controls">
-                    <button class="play-btn" onclick="playRoute()">▶ Play</button>
-                    <button class="play-btn" onclick="pauseRoute()">⏸ Pause</button>
+                <div id="devices-page">
+                    <button onclick="refreshDevices()">Refresh</button>
+                    <div id="deviceList"></div>
                 </div>
-                <div class="speed-control">
-                    <label>Speed:</label>
-                    <input type="range" id="playbackSpeed" min="1" max="10" value="5">
-                    <span id="speedValue">5x</span>
+                <div id="settings-page">
+                    <label for="adminPassword">Admin Password:</label>
+                    <input type="password" id="adminPassword">
+                    <button onclick="saveAdminSettings()">Save Password</button>
                 </div>
             </div>
             <div id="map"></div>
@@ -374,390 +173,168 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script>
+        const API_KEY = 'your_secret_key_123';
+        const ADMIN_PASSWORD = 'IgorSuperAgent007';
+
         let map;
-        let token = '';
-        let devicesData = new Map();
-        let deviceLayers = new Map();
         let updateInterval;
-        let selectedDeviceId = null;
-        let selectedDate = null;
-        let playbackAnimation = null;
-        let routeMarkers = [];
         let currentTab = 'devices';
-        let datePicker;
 
-        const deviceColors = [
-            '#FF5722', '#2196F3', '#4CAF50', '#FF9800', 
-            '#9C27B0', '#795548', '#607D8B', '#E91E63'
-        ];
+        const deviceLayers = new Map();
+        let currentDevice = null;
+        let routeMarkers = [];
+        let token = '';
 
-        // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('password').addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') login();
-            });
-            
-            document.getElementById('playbackSpeed').addEventListener('input', (e) => {
-                document.getElementById('speedValue').textContent = e.target.value + 'x';
-            });
-        });
+        document.getElementById('username').value = 'admin';
+        document.getElementById('password').value = ADMIN_PASSWORD;
 
+        document.getElementById('adminPassword').value = ADMIN_PASSWORD;
+
+        // --- Login Logic ---
         function login() {
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
-            const errorMsg = document.getElementById('errorMsg');
+            const errorElement = document.getElementById('loginError');
             
-            fetch('/api/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    token = data.token;
-                    document.getElementById('loginContainer').classList.add('hidden');
-                    document.getElementById('mainApp').classList.remove('hidden');
-                    initMap();
-                    initDatePicker();
-                    loadDevices();
-                    startAutoUpdate();
-                } else {
-                    errorMsg.textContent = 'Invalid credentials';
-                    errorMsg.classList.remove('hidden');
-                }
-            })
-            .catch(error => {
-                errorMsg.textContent = 'Connection error';
-                errorMsg.classList.remove('hidden');
-            });
+            if (username === 'admin' && password === ADMIN_PASSWORD) {
+                token = btoa(password); // Кодируем пароль в base64
+                document.getElementById('loginContainer').classList.add('hidden');
+                document.getElementById('mainApp').classList.remove('hidden');
+                initMap();
+                loadDevices();
+                startAutoUpdate();
+                errorElement.textContent = '';
+            } else {
+                errorElement.textContent = 'Invalid credentials';
+            }
         }
+        
+        // --- Tab Logic ---
+        function showTab(tabName) {
+            currentTab = tabName;
+            document.getElementById('devicesTab').classList.remove('active');
+            document.getElementById('settingsTab').classList.remove('active');
+            document.getElementById('devices-page').style.display = 'none';
+            document.getElementById('settings-page').style.display = 'none';
 
-        function initMap() {
-            map = L.map('map').setView([55.7558, 37.6176], 10);
-            
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
-            }).addTo(map);
-        }
-
-        function initDatePicker() {
-            datePicker = flatpickr("#datePicker", {
-                mode: "range",
-                dateFormat: "Y-m-d",
-                onChange: function(selectedDates, dateStr) {
-                    if (selectedDates.length === 2) {
-                        loadHistoryForDateRange(selectedDates[0], selectedDates[1]);
-                    }
-                }
-            });
-        }
-
-        function switchTab(tab) {
-            currentTab = tab;
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            event.target.classList.add('active');
-            
-            if (tab === 'devices') {
-                document.getElementById('devicesTab').classList.remove('hidden');
-                document.getElementById('historyTab').classList.add('hidden');
+            if (tabName === 'devices') {
+                document.getElementById('devicesTab').classList.add('active');
+                document.getElementById('devices-page').style.display = 'block';
                 loadDevices();
             } else {
-                document.getElementById('devicesTab').classList.add('hidden');
-                document.getElementById('historyTab').classList.remove('hidden');
-                loadHistory();
+                document.getElementById('settingsTab').classList.add('active');
+                document.getElementById('settings-page').style.display = 'block';
             }
         }
 
-        function loadDevices() {
-            fetch(`/api/devices/${token}`)
-                .then(response => response.json())
-                .then(devices => {
-                    updateDevicesList(devices);
-                    if (selectedDeviceId) {
-                        loadDeviceData(selectedDeviceId);
-                    }
-                })
-                .catch(error => console.error('Error:', error));
-        }
-
-        function updateDevicesList(devices) {
-            const list = document.getElementById('devicesTab');
-            list.innerHTML = '';
-            
-            devices.forEach((device, index) => {
-                const card = document.createElement('div');
-                card.className = `device-card ${selectedDeviceId === device.device_id ? 'active' : ''}`;
-                card.onclick = () => selectDevice(device.device_id);
-                
-                const lastSeen = device.last_seen ? 
-                    new Date(device.last_seen).toLocaleString() : 'Never';
-                const isOnline = device.last_seen && 
-                    (Date.now() - device.last_seen) < 300000;
-                
-                const color = deviceColors[index % deviceColors.length];
-                const battery = device.battery || 0;
-                
-                card.innerHTML = `
-                    <div class="device-name" style="color: ${color}">
-                        ${device.device_name}
-                    </div>
-                    <div class="device-status">
-                        <div class="status-dot ${isOnline ? 'status-online' : 'status-offline'}"></div>
-                        <span style="font-size: 14px">${isOnline ? 'Online' : 'Offline'}</span>
-                    </div>
-                    <div class="device-info">
-                        Last update: ${lastSeen}<br>
-                        Points: ${device.location_count}<br>
-                        Battery: ${battery}%
-                    </div>
-                `;
-                
-                list.appendChild(card);
-            });
-        }
-
-        function loadHistory() {
-            if (!selectedDeviceId) {
-                document.getElementById('historyTab').innerHTML = 
-                    '<p style="text-align: center; color: #999;">Select a device first</p>';
-                return;
-            }
-            
-            fetch(`/api/device/${selectedDeviceId}/history/${token}`)
-                .then(response => response.json())
-                .then(data => {
-                    displayHistory(data);
-                })
-                .catch(error => console.error('Error:', error));
-        }
-
-        function displayHistory(data) {
-            const list = document.getElementById('historyTab');
-            list.innerHTML = '';
-            
-            // Group by date
-            const groupedByDate = {};
-            data.locations.forEach(loc => {
-                const date = new Date(loc.timestamp).toLocaleDateString();
-                if (!groupedByDate[date]) {
-                    groupedByDate[date] = [];
-                }
-                groupedByDate[date].push(loc);
-            });
-            
-            // Display grouped data
-            Object.entries(groupedByDate).reverse().forEach(([date, locations]) => {
-                const item = document.createElement('div');
-                item.className = 'history-item';
-                item.onclick = () => loadDayData(selectedDeviceId, date);
-                
-                const distance = calculateTotalDistance(locations);
-                
-                item.innerHTML = `
-                    <div class="history-date">${date}</div>
-                    <div class="history-stats">
-                        Points: ${locations.length}<br>
-                        Distance: ${distance.toFixed(2)} km<br>
-                        First: ${new Date(locations[0].timestamp).toLocaleTimeString()}<br>
-                        Last: ${new Date(locations[locations.length-1].timestamp).toLocaleTimeString()}
-                    </div>
-                `;
-                
-                list.appendChild(item);
-            });
-        }
-
-        function selectDevice(deviceId) {
-            selectedDeviceId = deviceId;
-            clearMap();
-            loadDeviceData(deviceId);
-            
-            document.querySelectorAll('.device-card').forEach(card => {
-                card.classList.remove('active');
-            });
-            event.currentTarget.classList.add('active');
-            
-            updateMapInfo(deviceId);
-        }
-
-        function loadDeviceData(deviceId, dateFilter = null) {
-            const url = dateFilter ? 
-                `/api/device/${deviceId}/date/${dateFilter}/${token}` :
-                `/api/device/${deviceId}/${token}`;
-                
-            fetch(url)
-                .then(response => response.json())
-                .then(data => {
-                    displayDeviceOnMap(data, deviceId);
-                    updateMapInfo(deviceId, data);
-                })
-                .catch(error => console.error('Error:', error));
-        }
-
-        function displayDeviceOnMap(deviceData, deviceId) {
-            if (deviceData.locations.length === 0) return;
-
-            const colorIndex = Array.from(devicesData.keys()).indexOf(deviceId);
-            const color = deviceColors[colorIndex % deviceColors.length];
-
-            // Create interactive route
-            const latLngs = deviceData.locations.map(loc => [loc.latitude, loc.longitude]);
-            const routeLine = L.polyline(latLngs, {
-                color: color, 
-                weight: 4,
-                opacity: 0.8
+        // --- Map Initialization ---
+        function initMap() {
+            if (map) return;
+            map = L.map('map').setView([55.75, 37.61], 10);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
             }).addTo(map);
+        }
 
-            // Add time markers along the route
-            deviceData.locations.forEach((loc, index) => {
-                if (index % Math.ceil(deviceData.locations.length / 20) === 0 || 
-                    index === 0 || 
-                    index === deviceData.locations.length - 1) {
+        // --- API Calls ---
+        async function loadDevices() {
+            clearMap();
+            try {
+                const response = await fetch('/api/devices');
+                const devices = await response.json();
+                
+                const deviceListElement = document.getElementById('deviceList');
+                deviceListElement.innerHTML = '';
+                
+                devices.forEach(device => {
+                    const card = document.createElement('div');
+                    card.classList.add('device-card');
+                    card.dataset.deviceId = device.device_id;
+                    card.onclick = () => loadDeviceData(device.device_id);
                     
-                    const marker = L.circleMarker([loc.latitude, loc.longitude], {
-                        radius: 4,
-                        fillColor: color,
-                        color: '#fff',
-                        weight: 2,
-                        fillOpacity: 1
-                    }).addTo(map);
-                    
-                    const time = new Date(loc.timestamp);
-                    marker.bindPopup(`
-                        <div class="route-popup">
-                            <div class="time">${time.toLocaleString()}</div>
-                            <div class="location">📍 ${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}</div>
-                            <div class="speed">Accuracy: ${loc.accuracy}m</div>
+                    const time = new Date(device.last_updated).toLocaleString();
+
+                    card.innerHTML = `
+                        <h4>${device.device_id}</h4>
+                        <p class="last-updated">Last updated: ${time}</p>
+                        <div class="location-info">
+                           Lat: ${device.latitude.toFixed(6)}, Lon: ${device.longitude.toFixed(6)}
                         </div>
-                    `);
-                    
-                    routeMarkers.push(marker);
-                }
-            });
-
-            // Last position marker
-            const lastLocation = deviceData.locations[deviceData.locations.length - 1];
-            const marker = L.marker([lastLocation.latitude, lastLocation.longitude], {
-                icon: L.divIcon({
-                    html: `<div style="background: ${color}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
-                    iconSize: [16, 16],
-                    className: 'custom-marker'
-                })
-            }).addTo(map);
-            
-            marker.bindPopup(`
-                <b>${deviceData.device_name}</b><br>
-                Last seen: ${new Date(lastLocation.timestamp).toLocaleString()}<br>
-                Battery: ${deviceData.battery}%
-            `).openPopup();
-
-            deviceLayers.set(deviceId, { routeLine, marker, markers: routeMarkers });
-            devicesData.set(deviceId, deviceData);
-
-            map.fitBounds(routeLine.getBounds());
-        }
-
-        function updateMapInfo(deviceId, data = null) {
-            const device = data || devicesData.get(deviceId);
-            if (!device) return;
-            
-            document.getElementById('infoTitle').textContent = device.device_name || 'Device ' + deviceId;
-            document.getElementById('infoDate').textContent = selectedDate || 'All time';
-            document.getElementById('infoPoints').textContent = `Points: ${device.locations ? device.locations.length : 0}`;
-            
-            if (device.locations && device.locations.length > 1) {
-                const distance = calculateTotalDistance(device.locations);
-                document.getElementById('infoDistance').textContent = `Distance: ${distance.toFixed(2)} km`;
-            }
-        }
-
-        function calculateTotalDistance(locations) {
-            let total = 0;
-            for (let i = 1; i < locations.length; i++) {
-                total += calculateDistance(
-                    locations[i-1].latitude, locations[i-1].longitude,
-                    locations[i].latitude, locations[i].longitude
-                );
-            }
-            return total / 1000; // Convert to km
-        }
-
-        function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371e3; // Earth radius in meters
-            const φ1 = lat1 * Math.PI/180;
-            const φ2 = lat2 * Math.PI/180;
-            const Δφ = (lat2-lat1) * Math.PI/180;
-            const Δλ = (lon2-lon1) * Math.PI/180;
-
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-            return R * c;
-        }
-
-        function playRoute() {
-            // Animation playback implementation
-            console.log('Playing route animation...');
-        }
-
-        function pauseRoute() {
-            if (playbackAnimation) {
-                clearInterval(playbackAnimation);
-                playbackAnimation = null;
-            }
-        }
-
-        function exportData() {
-            if (!selectedDeviceId) {
-                alert('Please select a device first');
-                return;
-            }
-            
-            const data = devicesData.get(selectedDeviceId);
-            if (data) {
-                const json = JSON.stringify(data, null, 2);
-                const blob = new Blob([json], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `tracking_${selectedDeviceId}_${Date.now()}.json`;
-                a.click();
-            }
-        }
-
-        function loadDayData(deviceId, date) {
-            selectedDate = date;
-            clearMap();
-            loadDeviceData(deviceId, date);
-        }
-
-        function loadHistoryForDateRange(startDate, endDate) {
-            console.log('Loading history from', startDate, 'to', endDate);
-            // Implement date range filtering
-        }
-
-        function showAllDevices() {
-            selectedDeviceId = null;
-            clearMap();
-            
-            fetch(`/api/devices/${token}`)
-                .then(response => response.json())
-                .then(devices => {
-                    devices.forEach(device => {
-                        if (device.location_count > 0) {
-                            loadDeviceData(device.device_id);
-                        }
-                    });
+                    `;
+                    deviceListElement.appendChild(card);
                 });
-
-            document.querySelectorAll('.device-card').forEach(card => {
-                card.classList.remove('active');
-            });
+            } catch (error) {
+                console.error('Failed to load devices:', error);
+            }
         }
 
+        async function loadDeviceData(deviceId) {
+            currentDevice = deviceId;
+            document.querySelectorAll('.device-card').forEach(card => card.classList.remove('active'));
+            document.querySelector(`[data-device-id="${deviceId}"]`).classList.add('active');
+            
+            try {
+                const response = await fetch(`/api/device/${deviceId}`);
+                const data = await response.json();
+
+                if (!map) initMap();
+                clearMap();
+                
+                const locations = data.locations;
+                if (locations && locations.length > 0) {
+                    const firstLocation = locations[0];
+                    const latlng = [firstLocation.latitude, firstLocation.longitude];
+                    
+                    if (!deviceLayers.has(deviceId)) {
+                        deviceLayers.set(deviceId, {});
+                    }
+
+                    // Add a marker for the latest position
+                    const marker = L.marker(latlng).addTo(map)
+                        .bindPopup(`<b>${deviceId}</b><br>Lat: ${latlng[0]}, Lon: ${latlng[1]}`);
+                    deviceLayers.get(deviceId).marker = marker;
+                    
+                    // Add a route line
+                    const latlngs = locations.map(loc => [loc.latitude, loc.longitude]).reverse();
+                    const polyline = L.polyline(latlngs, {color: 'blue'}).addTo(map);
+                    deviceLayers.get(deviceId).routeLine = polyline;
+
+                    map.fitBounds(polyline.getBounds());
+                } else {
+                    alert('No location data for this device.');
+                }
+            } catch (error) {
+                console.error('Failed to load device data:', error);
+            }
+        }
+
+        async function saveAdminSettings() {
+            const newPassword = document.getElementById('adminPassword').value;
+            const newAdminToken = btoa(newPassword);
+            
+            try {
+                const response = await fetch(`/api/device/admin/settings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        token: newAdminToken,
+                        settings: {
+                            // Здесь могут быть другие настройки
+                            admin_password: newPassword
+                        }
+                    })
+                });
+                if (response.ok) {
+                    alert('Admin password updated successfully!');
+                } else {
+                    alert('Failed to update admin password. Check token.');
+                }
+            } catch (error) {
+                console.error('Error saving settings:', error);
+                alert('An error occurred.');
+            }
+        }
+        
         function clearMap() {
             deviceLayers.forEach(layers => {
                 if (layers.routeLine) map.removeLayer(layers.routeLine);
@@ -766,7 +343,6 @@
                     layers.markers.forEach(m => map.removeLayer(m));
                 }
             });
-            routeMarkers = [];
             deviceLayers.clear();
         }
 
@@ -787,9 +363,10 @@
             clearInterval(updateInterval);
             document.getElementById('mainApp').classList.add('hidden');
             document.getElementById('loginContainer').classList.remove('hidden');
-            document.getElementById('username').value = '';
-            document.getElementById('password').value = '';
+            document.getElementById('username').value = 'admin';
+            document.getElementById('password').value = ADMIN_PASSWORD;
         }
+
     </script>
 </body>
 </html>
