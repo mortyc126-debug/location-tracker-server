@@ -1,238 +1,215 @@
-const express = require('express');
-const { createClient } = require('@supabase/supabase-js');
-require('dotenv').config();
+import express from "express";
+import bodyParser from "body-parser";
+import cors from "cors";
+import { createClient } from "@supabase/supabase-js";
 
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
-// Supabase configuration
-const supabaseUrl = 'https://hapwopjrgwdjwfawpjwq.supabase.co';
-const supabaseKey = process.env.SUPABASE_KEY;
+// === Supabase подключение ===
+const supabaseUrl = "https://hapwopjrgwdjwfawpjwq.supabase.co";
+const supabaseKey = process.env.SUPABASE_KEY; // ключ хранится в Render
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const API_KEY = 'your_secret_key_123';
-const ADMIN_PASSWORD = 'IgorSuperAgent007';
+// === Конфиг авторизации ===
+const ADMIN_USER = process.env.ADMIN_USER || "admin";
+const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
+const SECRET_TOKEN = process.env.SECRET_TOKEN || "your_secret_key_123";
 
-// Cache для устройств
-let devicesCache = new Map();
+// === Middlewares ===
+app.use(cors());
+app.use(bodyParser.json());
+app.use(express.static("public"));
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.static('public'));
-
-// API для получения данных с телефонов
-app.post('/api/location', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${API_KEY}`) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const { device_id, device_name, latitude, longitude, timestamp, accuracy, battery } = req.body;
-    try {
-        await supabase.from('locations').insert([{
-            device_id,
-            latitude,
-            longitude,
-            accuracy: accuracy || 0,
-            battery: battery || 0,
-            timestamp: timestamp || Date.now()
-        }]);
-
-        devicesCache.set(device_id, { device_name, last_seen: Date.now(), battery });
-
-        await supabase.from('device_settings').upsert([{
-            device_id,
-            settings: {
-                device_name,
-                last_seen: Date.now(),
-                battery,
-                recording_enabled: true,
-                auto_archive: true
-            }
-        }]);
-
-        console.log(`[${new Date().toISOString()}] ${device_name}: ${latitude}, ${longitude}`);
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Error saving location:', error);
-        res.status(500).json({ error: 'Database error' });
-    }
+// === AUTH ===
+app.post("/api/login", (req, res) => {
+  const { username, password } = req.body;
+  if (username === ADMIN_USER && password === ADMIN_PASS) {
+    return res.json({ success: true, token: SECRET_TOKEN });
+  }
+  return res.status(401).json({ success: false, error: "Invalid credentials" });
 });
 
-// API для логина
-app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
-    if (username === 'admin' && password === ADMIN_PASSWORD) {
-        res.json({ success: true, token: Buffer.from(ADMIN_PASSWORD).toString('base64') });
+// === POST location ===
+app.post("/api/location", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || authHeader !== `Bearer ${SECRET_TOKEN}`) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const { device_id, device_name, latitude, longitude, accuracy, battery } = req.body;
+  if (!device_id || !latitude || !longitude) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+
+  const timestamp = Date.now();
+
+  const { error } = await supabase.from("locations").insert([
+    {
+      device_id,
+      latitude,
+      longitude,
+      accuracy,
+      battery,
+      timestamp,
+    },
+  ]);
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // сохраняем настройки если новое устройство
+  const { data: exists } = await supabase
+    .from("device_settings")
+    .select("*")
+    .eq("device_id", device_id)
+    .maybeSingle();
+
+  if (!exists) {
+    await supabase.from("device_settings").insert([
+      { device_id, settings: { name: device_name || device_id } },
+    ]);
+  }
+
+  res.json({ success: true });
+});
+
+// === GET devices list ===
+app.get("/api/devices/:token", async (req, res) => {
+  if (req.params.token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
+
+  const { data: devices, error } = await supabase
+    .from("locations")
+    .select(
+      "device_id, battery, timestamp, latitude, longitude, accuracy"
+    )
+    .order("timestamp", { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // группировка по устройствам
+  const map = new Map();
+  devices.forEach((row) => {
+    if (!map.has(row.device_id)) {
+      map.set(row.device_id, {
+        device_id: row.device_id,
+        battery: row.battery,
+        last_seen: row.timestamp,
+        last_location: { lat: row.latitude, lng: row.longitude },
+        location_count: 1,
+      });
     } else {
-        res.status(401).json({ error: 'Invalid credentials' });
+      map.get(row.device_id).location_count++;
     }
+  });
+
+  // имена из device_settings
+  const { data: settings } = await supabase.from("device_settings").select("*");
+  const settingsMap = new Map(settings.map((s) => [s.device_id, s.settings.name]));
+
+  const result = Array.from(map.values()).map((d) => ({
+    ...d,
+    device_name: settingsMap.get(d.device_id) || d.device_id,
+  }));
+
+  res.json(result);
 });
 
-// API для получения списка устройств
-app.get('/api/devices/:token', async (req, res) => {
-    if (Buffer.from(req.params.token, 'base64').toString() !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    try {
-        const { data: settings } = await supabase.from('device_settings').select('*');
-        const devices = await Promise.all(settings.map(async (device) => {
-            const { data: lastLocation } = await supabase
-                .from('locations')
-                .select('*')
-                .eq('device_id', device.device_id)
-                .order('timestamp', { ascending: false })
-                .limit(1)
-                .single();
+// === GET device full data ===
+app.get("/api/device/:device_id/:token", async (req, res) => {
+  if (req.params.token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
 
-            const { count } = await supabase
-                .from('locations')
-                .select('*', { count: 'exact', head: true })
-                .eq('device_id', device.device_id);
+  const device_id = req.params.device_id;
 
-            return {
-                device_id: device.device_id,
-                device_name: device.settings?.device_name || 'Unknown',
-                last_seen: lastLocation?.timestamp || null,
-                last_location: lastLocation ? {
-                    lat: lastLocation.latitude,
-                    lng: lastLocation.longitude
-                } : null,
-                location_count: count || 0,
-                battery: device.settings?.battery || 0,
-                settings: device.settings
-            };
-        }));
-        res.json(devices);
-    } catch (error) {
-        console.error('Error fetching devices:', error);
-        res.status(500).json({ error: 'Database error' });
-    }
+  const { data: locations, error } = await supabase
+    .from("locations")
+    .select("*")
+    .eq("device_id", device_id)
+    .order("timestamp", { ascending: true });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  const { data: settings } = await supabase
+    .from("device_settings")
+    .select("settings")
+    .eq("device_id", device_id)
+    .maybeSingle();
+
+  res.json({
+    device_id,
+    device_name: settings?.settings?.name || device_id,
+    locations,
+  });
 });
 
-// API для получения данных устройства
-app.get('/api/device/:device_id/:token', async (req, res) => {
-    const { device_id, token } = req.params;
-    if (Buffer.from(token, 'base64').toString() !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    try {
-        const { data: settings } = await supabase
-            .from('device_settings')
-            .select('*')
-            .eq('device_id', device_id)
-            .single();
+// === GET device history ===
+app.get("/api/device/:device_id/history/:token", async (req, res) => {
+  if (req.params.token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
 
-        const { data: locations } = await supabase
-            .from('locations')
-            .select('*')
-            .eq('device_id', device_id)
-            .order('timestamp', { ascending: false })
-            .limit(1000);
+  const { device_id } = req.params;
 
-        res.json({
-            device_id,
-            device_name: settings?.settings?.device_name || 'Unknown',
-            battery: settings?.settings?.battery || 0,
-            locations: locations.reverse()
-        });
-    } catch (error) {
-        console.error('Error fetching device data:', error);
-        res.status(500).json({ error: 'Database error' });
-    }
+  const { data: locations, error } = await supabase
+    .from("locations")
+    .select("*")
+    .eq("device_id", device_id)
+    .order("timestamp", { ascending: true });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  res.json({ device_id, locations });
 });
 
-// API для истории устройства
-app.get('/api/device/:device_id/history/:token', async (req, res) => {
-    const { device_id, token } = req.params;
-    if (Buffer.from(token, 'base64').toString() !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    try {
-        const { data: locations } = await supabase
-            .from('locations')
-            .select('*')
-            .eq('device_id', device_id)
-            .order('timestamp', { ascending: true });
+// === RENAME device ===
+app.post("/api/device/:device_id/rename", async (req, res) => {
+  const { token, name } = req.body;
+  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
 
-        res.json({ locations });
-    } catch (err) {
-        console.error('Error fetching history:', err);
-        res.status(500).json({ error: 'Database error' });
-    }
+  const { error } = await supabase
+    .from("device_settings")
+    .upsert({ device_id: req.params.device_id, settings: { name } });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  res.json({ success: true });
 });
 
-// API для переименования устройства
-app.post('/api/device/:device_id/rename', async (req, res) => {
-    const { device_id } = req.params;
-    const { name, token } = req.body;
-    if (Buffer.from(token, 'base64').toString() !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    try {
-        const { data: current } = await supabase
-            .from('device_settings')
-            .select('*')
-            .eq('device_id', device_id)
-            .single();
+// === DELETE device ===
+app.delete("/api/device/:device_id/:token", async (req, res) => {
+  if (req.params.token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
 
-        const updatedSettings = { ...(current?.settings || {}), device_name: name };
+  const { device_id } = req.params;
 
-        await supabase.from('device_settings').upsert([{ device_id, settings: updatedSettings }]);
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Error renaming device:', error);
-        res.status(500).json({ error: 'Database error' });
-    }
+  await supabase.from("locations").delete().eq("device_id", device_id);
+  await supabase.from("device_settings").delete().eq("device_id", device_id);
+
+  res.json({ success: true });
 });
 
-// API для удаления устройства
-app.delete('/api/device/:device_id/:token', async (req, res) => {
-    const { device_id, token } = req.params;
-    if (Buffer.from(token, 'base64').toString() !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    try {
-        await supabase.from('locations').delete().eq('device_id', device_id);
-        await supabase.from('device_settings').delete().eq('device_id', device_id);
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Error deleting device:', error);
-        res.status(500).json({ error: 'Database error' });
-    }
+// === EXPORT device data ===
+app.get("/api/export/:device_id/:token", async (req, res) => {
+  if (req.params.token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
+
+  const device_id = req.params.device_id;
+
+  const { data: locations } = await supabase
+    .from("locations")
+    .select("*")
+    .eq("device_id", device_id)
+    .order("timestamp", { ascending: true });
+
+  const { data: settings } = await supabase
+    .from("device_settings")
+    .select("settings")
+    .eq("device_id", device_id)
+    .maybeSingle();
+
+  res.json({
+    device_id,
+    device_name: settings?.settings?.name || device_id,
+    locations,
+  });
 });
 
-// API для экспорта данных
-app.get('/api/export/:device_id/:token', async (req, res) => {
-    const { device_id, token } = req.params;
-    if (Buffer.from(token, 'base64').toString() !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    try {
-        const { data: locations } = await supabase
-            .from('locations')
-            .select('*')
-            .eq('device_id', device_id)
-            .order('timestamp', { ascending: true });
-
-        const { data: settings } = await supabase
-            .from('device_settings')
-            .select('*')
-            .eq('device_id', device_id)
-            .single();
-
-        res.json({
-            device_id,
-            device_name: settings?.settings?.device_name,
-            locations,
-            exported_at: new Date().toISOString()
-        });
-    } catch (error) {
-        console.error('Error exporting data:', error);
-        res.status(500).json({ error: 'Database error' });
-    }
-});
-
-app.listen(port, '0.0.0.0', () => {
-    console.log(`Server running at http://0.0.0.0:${port}`);
-    console.log(`Connected to Supabase`);
+// === Start server ===
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
