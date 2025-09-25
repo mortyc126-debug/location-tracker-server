@@ -1,215 +1,174 @@
-import express from "express";
-import bodyParser from "body-parser";
-import cors from "cors";
-import { createClient } from "@supabase/supabase-js";
-
+// server.js
+const express = require('express');
+const bodyParser = require('body-parser');
+const { v4: uuidv4 } = require('uuid');
+const sqlite3 = require('sqlite3').verbose();
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
-// === Supabase подключение ===
-const supabaseUrl = "https://hapwopjrgwdjwfawpjwq.supabase.co";
-const supabaseKey = process.env.SUPABASE_KEY; // ключ хранится в Render
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-// === Конфиг авторизации ===
-const ADMIN_USER = process.env.ADMIN_USER || "admin";
-const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
-const SECRET_TOKEN = process.env.SECRET_TOKEN || "your_secret_key_123";
-
-// === Middlewares ===
-app.use(cors());
 app.use(bodyParser.json());
-app.use(express.static("public"));
 
-// === AUTH ===
-app.post("/api/login", (req, res) => {
-  const { username, password } = req.body;
-  if (username === ADMIN_USER && password === ADMIN_PASS) {
-    return res.json({ success: true, token: SECRET_TOKEN });
-  }
-  return res.status(401).json({ success: false, error: "Invalid credentials" });
-});
+// ===== DATABASE =====
+const db = new sqlite3.Database('./agents.db');
 
-// === POST location ===
-app.post("/api/location", async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${SECRET_TOKEN}`) {
-    return res.status(403).json({ error: "Forbidden" });
-  }
+// Создаем таблицы, если их нет
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    username TEXT UNIQUE,
+    password TEXT,
+    token TEXT
+  )`);
+  
+  db.run(`CREATE TABLE IF NOT EXISTS devices (
+    device_id TEXT PRIMARY KEY,
+    device_name TEXT,
+    battery INTEGER,
+    last_seen TEXT,
+    last_lat REAL,
+    last_lng REAL
+  )`);
 
-  const { device_id, device_name, latitude, longitude, accuracy, battery } = req.body;
-  if (!device_id || !latitude || !longitude) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
+  db.run(`CREATE TABLE IF NOT EXISTS locations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT,
+    latitude REAL,
+    longitude REAL,
+    timestamp TEXT
+  )`);
 
-  const timestamp = Date.now();
-
-  const { error } = await supabase.from("locations").insert([
-    {
-      device_id,
-      latitude,
-      longitude,
-      accuracy,
-      battery,
-      timestamp,
-    },
-  ]);
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  // сохраняем настройки если новое устройство
-  const { data: exists } = await supabase
-    .from("device_settings")
-    .select("*")
-    .eq("device_id", device_id)
-    .maybeSingle();
-
-  if (!exists) {
-    await supabase.from("device_settings").insert([
-      { device_id, settings: { name: device_name || device_id } },
-    ]);
-  }
-
-  res.json({ success: true });
-});
-
-// === GET devices list ===
-app.get("/api/devices/:token", async (req, res) => {
-  if (req.params.token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
-
-  const { data: devices, error } = await supabase
-    .from("locations")
-    .select(
-      "device_id, battery, timestamp, latitude, longitude, accuracy"
-    )
-    .order("timestamp", { ascending: false });
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  // группировка по устройствам
-  const map = new Map();
-  devices.forEach((row) => {
-    if (!map.has(row.device_id)) {
-      map.set(row.device_id, {
-        device_id: row.device_id,
-        battery: row.battery,
-        last_seen: row.timestamp,
-        last_location: { lat: row.latitude, lng: row.longitude },
-        location_count: 1,
-      });
-    } else {
-      map.get(row.device_id).location_count++;
+  // Добавим тестового пользователя и устройства, если их нет
+  db.get(`SELECT * FROM users WHERE username='agent007'`, (err, row) => {
+    if(!row){
+      db.run(`INSERT INTO users (username, password, token) VALUES (?, ?, ?)`,
+        ['agent007', 'secret', uuidv4()]);
     }
   });
 
-  // имена из device_settings
-  const { data: settings } = await supabase.from("device_settings").select("*");
-  const settingsMap = new Map(settings.map((s) => [s.device_id, s.settings.name]));
+  db.get(`SELECT * FROM devices WHERE device_id='dev1'`, (err,row)=>{
+    if(!row){
+      const now = new Date().toISOString();
+      db.run(`INSERT INTO devices (device_id, device_name, battery, last_seen, last_lat, last_lng)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        ['dev1','Tracker Alpha',100,now,54.6872,25.2797]);
+    }
+  });
 
-  const result = Array.from(map.values()).map((d) => ({
-    ...d,
-    device_name: settingsMap.get(d.device_id) || d.device_id,
-  }));
-
-  res.json(result);
-});
-
-// === GET device full data ===
-app.get("/api/device/:device_id/:token", async (req, res) => {
-  if (req.params.token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
-
-  const device_id = req.params.device_id;
-
-  const { data: locations, error } = await supabase
-    .from("locations")
-    .select("*")
-    .eq("device_id", device_id)
-    .order("timestamp", { ascending: true });
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  const { data: settings } = await supabase
-    .from("device_settings")
-    .select("settings")
-    .eq("device_id", device_id)
-    .maybeSingle();
-
-  res.json({
-    device_id,
-    device_name: settings?.settings?.name || device_id,
-    locations,
+  db.get(`SELECT * FROM devices WHERE device_id='dev2'`, (err,row)=>{
+    if(!row){
+      const now = new Date().toISOString();
+      db.run(`INSERT INTO devices (device_id, device_name, battery, last_seen, last_lat, last_lng)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        ['dev2','Tracker Beta',80,now,55.0,26.0]);
+    }
   });
 });
 
-// === GET device history ===
-app.get("/api/device/:device_id/history/:token", async (req, res) => {
-  if (req.params.token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
-
-  const { device_id } = req.params;
-
-  const { data: locations, error } = await supabase
-    .from("locations")
-    .select("*")
-    .eq("device_id", device_id)
-    .order("timestamp", { ascending: true });
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  res.json({ device_id, locations });
-});
-
-// === RENAME device ===
-app.post("/api/device/:device_id/rename", async (req, res) => {
-  const { token, name } = req.body;
-  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
-
-  const { error } = await supabase
-    .from("device_settings")
-    .upsert({ device_id: req.params.device_id, settings: { name } });
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  res.json({ success: true });
-});
-
-// === DELETE device ===
-app.delete("/api/device/:device_id/:token", async (req, res) => {
-  if (req.params.token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
-
-  const { device_id } = req.params;
-
-  await supabase.from("locations").delete().eq("device_id", device_id);
-  await supabase.from("device_settings").delete().eq("device_id", device_id);
-
-  res.json({ success: true });
-});
-
-// === EXPORT device data ===
-app.get("/api/export/:device_id/:token", async (req, res) => {
-  if (req.params.token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
-
-  const device_id = req.params.device_id;
-
-  const { data: locations } = await supabase
-    .from("locations")
-    .select("*")
-    .eq("device_id", device_id)
-    .order("timestamp", { ascending: true });
-
-  const { data: settings } = await supabase
-    .from("device_settings")
-    .select("settings")
-    .eq("device_id", device_id)
-    .maybeSingle();
-
-  res.json({
-    device_id,
-    device_name: settings?.settings?.name || device_id,
-    locations,
+// ===== AUTH =====
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body;
+  db.get(`SELECT * FROM users WHERE username=? AND password=?`, [username,password], (err,row)=>{
+    if(err) return res.status(500).json({error:err.message});
+    if(!row) return res.status(401).json({success:false,error:'Invalid credentials'});
+    const token = uuidv4();
+    db.run(`UPDATE users SET token=? WHERE username=?`, [token, username]);
+    res.json({success:true, token});
   });
 });
 
-// === Start server ===
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// ===== MIDDLEWARE =====
+function authMiddleware(req,res,next){
+  const token = req.params.token || req.body.token;
+  if(!token) return res.status(401).json({error:'No token'});
+  db.get(`SELECT * FROM users WHERE token=?`, [token], (err,row)=>{
+    if(err) return res.status(500).json({error:err.message});
+    if(!row) return res.status(401).json({error:'Invalid token'});
+    next();
+  });
+}
+
+// ===== DEVICES =====
+app.get('/api/devices/:token', authMiddleware, (req,res)=>{
+  db.all(`SELECT * FROM devices`, [], (err, rows)=>{
+    if(err) return res.status(500).json({error:err.message});
+    const devicesList = rows.map(d=>({
+      device_id: d.device_id,
+      device_name: d.device_name,
+      last_seen: d.last_seen,
+      battery: d.battery,
+      last_location: d.last_lat && d.last_lng ? {lat:d.last_lat,lng:d.last_lng} : null
+    }));
+    res.json(devicesList);
+  });
 });
+
+// ===== DEVICE DATA =====
+app.get('/api/device/:device_id/:token', authMiddleware, (req,res)=>{
+  const device_id = req.params.device_id;
+  db.get(`SELECT * FROM devices WHERE device_id=?`, [device_id], (err,d)=>{
+    if(err) return res.status(500).json({error:err.message});
+    if(!d) return res.status(404).json({error:'Device not found'});
+    db.all(`SELECT latitude, longitude, timestamp FROM locations WHERE device_id=? ORDER BY timestamp`, [device_id], (err, locs)=>{
+      if(err) return res.status(500).json({error:err.message});
+      res.json({device_name:d.device_name, locations: locs});
+    });
+  });
+});
+
+// ===== HISTORY =====
+app.get('/api/device/:device_id/history/:token', authMiddleware, (req,res)=>{
+  const device_id = req.params.device_id;
+  db.all(`SELECT latitude, longitude, timestamp FROM locations WHERE device_id=? ORDER BY timestamp`, [device_id], (err, locs)=>{
+    if(err) return res.status(500).json({error:err.message});
+    res.json({locations: locs});
+  });
+});
+
+// ===== RENAME =====
+app.post('/api/device/:device_id/rename', authMiddleware, (req,res)=>{
+  const device_id = req.params.device_id;
+  const { name } = req.body;
+  db.run(`UPDATE devices SET device_name=? WHERE device_id=?`, [name, device_id], function(err){
+    if(err) return res.status(500).json({error:err.message});
+    res.json({success:true});
+  });
+});
+
+// ===== DELETE =====
+app.delete('/api/device/:device_id/:token', authMiddleware, (req,res)=>{
+  const device_id = req.params.device_id;
+  db.run(`DELETE FROM devices WHERE device_id=?`, [device_id], function(err){
+    if(err) return res.status(500).json({error:err.message});
+    db.run(`DELETE FROM locations WHERE device_id=?`, [device_id]);
+    res.json({success:true});
+  });
+});
+
+// ===== EXPORT =====
+app.get('/api/export/:device_id/:token', authMiddleware, (req,res)=>{
+  const device_id = req.params.device_id;
+  db.get(`SELECT * FROM devices WHERE device_id=?`, [device_id], (err,d)=>{
+    if(err) return res.status(500).json({error:err.message});
+    if(!d) return res.status(404).json({error:'Device not found'});
+    db.all(`SELECT latitude, longitude, timestamp FROM locations WHERE device_id=? ORDER BY timestamp`, [device_id], (err, locs)=>{
+      if(err) return res.status(500).json({error:err.message});
+      res.json({...d, locations: locs});
+    });
+  });
+});
+
+// ===== SIMULATE MOVEMENT =====
+setInterval(()=>{
+  db.all(`SELECT * FROM devices`, [], (err, devices)=>{
+    if(err || !devices) return;
+    devices.forEach(d=>{
+      const lat = d.last_lat + (Math.random()-0.5)*0.01;
+      const lng = d.last_lng + (Math.random()-0.5)*0.01;
+      const timestamp = new Date().toISOString();
+      db.run(`UPDATE devices SET last_lat=?, last_lng=?, last_seen=? WHERE device_id=?`, [lat,lng,timestamp,d.device_id]);
+      db.run(`INSERT INTO locations (device_id, latitude, longitude, timestamp) VALUES (?,?,?,?)`, [d.device_id, lat, lng, timestamp]);
+    });
+  });
+}, 5000);
+
+app.listen(PORT, ()=>console.log(`Agent server running on http://localhost:${PORT}`));
