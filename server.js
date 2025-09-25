@@ -1,174 +1,142 @@
-// server.js
 const express = require('express');
 const bodyParser = require('body-parser');
 const { v4: uuidv4 } = require('uuid');
 const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, 'public'))); // для фронтенда
 
-// ===== DATABASE =====
-const db = new sqlite3.Database('./agents.db');
+// === DB SETUP ===
+const db = new sqlite3.Database('./tracker.db');
 
-// Создаем таблицы, если их нет
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY,
+    id TEXT PRIMARY KEY,
     username TEXT UNIQUE,
-    password TEXT,
-    token TEXT
+    password TEXT
   )`);
-  
+
   db.run(`CREATE TABLE IF NOT EXISTS devices (
     device_id TEXT PRIMARY KEY,
     device_name TEXT,
-    battery INTEGER,
-    last_seen TEXT,
-    last_lat REAL,
-    last_lng REAL
+    owner TEXT,
+    FOREIGN KEY(owner) REFERENCES users(id)
   )`);
 
   db.run(`CREATE TABLE IF NOT EXISTS locations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT PRIMARY KEY,
     device_id TEXT,
     latitude REAL,
     longitude REAL,
-    timestamp TEXT
+    battery INTEGER,
+    timestamp INTEGER,
+    FOREIGN KEY(device_id) REFERENCES devices(device_id)
   )`);
-
-  // Добавим тестового пользователя и устройства, если их нет
-  db.get(`SELECT * FROM users WHERE username='agent007'`, (err, row) => {
-    if(!row){
-      db.run(`INSERT INTO users (username, password, token) VALUES (?, ?, ?)`,
-        ['agent007', 'secret', uuidv4()]);
-    }
-  });
-
-  db.get(`SELECT * FROM devices WHERE device_id='dev1'`, (err,row)=>{
-    if(!row){
-      const now = new Date().toISOString();
-      db.run(`INSERT INTO devices (device_id, device_name, battery, last_seen, last_lat, last_lng)
-              VALUES (?, ?, ?, ?, ?, ?)`,
-        ['dev1','Tracker Alpha',100,now,54.6872,25.2797]);
-    }
-  });
-
-  db.get(`SELECT * FROM devices WHERE device_id='dev2'`, (err,row)=>{
-    if(!row){
-      const now = new Date().toISOString();
-      db.run(`INSERT INTO devices (device_id, device_name, battery, last_seen, last_lat, last_lng)
-              VALUES (?, ?, ?, ?, ?, ?)`,
-        ['dev2','Tracker Beta',80,now,55.0,26.0]);
-    }
-  });
 });
 
-// ===== AUTH =====
+// === AUTH ===
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  db.get(`SELECT * FROM users WHERE username=? AND password=?`, [username,password], (err,row)=>{
-    if(err) return res.status(500).json({error:err.message});
-    if(!row) return res.status(401).json({success:false,error:'Invalid credentials'});
-    const token = uuidv4();
-    db.run(`UPDATE users SET token=? WHERE username=?`, [token, username]);
-    res.json({success:true, token});
+  db.get(`SELECT * FROM users WHERE username = ? AND password = ?`, [username, password], (err, row) => {
+    if (err) return res.status(500).json({ success: false, error: 'DB error' });
+    if (!row) return res.json({ success: false, error: 'Invalid credentials' });
+    const token = uuidv4(); // простой токен
+    res.json({ success: true, token, userId: row.id });
   });
 });
 
-// ===== MIDDLEWARE =====
-function authMiddleware(req,res,next){
-  const token = req.params.token || req.body.token;
-  if(!token) return res.status(401).json({error:'No token'});
-  db.get(`SELECT * FROM users WHERE token=?`, [token], (err,row)=>{
-    if(err) return res.status(500).json({error:err.message});
-    if(!row) return res.status(401).json({error:'Invalid token'});
-    next();
-  });
-}
-
-// ===== DEVICES =====
-app.get('/api/devices/:token', authMiddleware, (req,res)=>{
-  db.all(`SELECT * FROM devices`, [], (err, rows)=>{
-    if(err) return res.status(500).json({error:err.message});
-    const devicesList = rows.map(d=>({
-      device_id: d.device_id,
-      device_name: d.device_name,
-      last_seen: d.last_seen,
-      battery: d.battery,
-      last_location: d.last_lat && d.last_lng ? {lat:d.last_lat,lng:d.last_lng} : null
-    }));
-    res.json(devicesList);
+// === DEVICES ===
+app.get('/api/devices/:token', (req, res) => {
+  const token = req.params.token;
+  // Для упрощения не проверяем токен, но можно добавить проверку
+  db.all(`SELECT * FROM devices`, [], (err, rows) => {
+    if (err) return res.status(500).json([]);
+    res.json(rows);
   });
 });
 
-// ===== DEVICE DATA =====
-app.get('/api/device/:device_id/:token', authMiddleware, (req,res)=>{
-  const device_id = req.params.device_id;
-  db.get(`SELECT * FROM devices WHERE device_id=?`, [device_id], (err,d)=>{
-    if(err) return res.status(500).json({error:err.message});
-    if(!d) return res.status(404).json({error:'Device not found'});
-    db.all(`SELECT latitude, longitude, timestamp FROM locations WHERE device_id=? ORDER BY timestamp`, [device_id], (err, locs)=>{
-      if(err) return res.status(500).json({error:err.message});
-      res.json({device_name:d.device_name, locations: locs});
+app.get('/api/device/:deviceId/:token', (req, res) => {
+  const { deviceId } = req.params;
+  db.get(`SELECT * FROM devices WHERE device_id = ?`, [deviceId], (err, device) => {
+    if (err || !device) return res.status(404).json({ error: 'Device not found' });
+    db.all(`SELECT * FROM locations WHERE device_id = ? ORDER BY timestamp ASC`, [deviceId], (err, locations) => {
+      if (err) return res.status(500).json({ error: 'DB error' });
+      res.json({ ...device, locations });
     });
   });
 });
 
-// ===== HISTORY =====
-app.get('/api/device/:device_id/history/:token', authMiddleware, (req,res)=>{
-  const device_id = req.params.device_id;
-  db.all(`SELECT latitude, longitude, timestamp FROM locations WHERE device_id=? ORDER BY timestamp`, [device_id], (err, locs)=>{
-    if(err) return res.status(500).json({error:err.message});
-    res.json({locations: locs});
+// === HISTORY ===
+app.get('/api/device/:deviceId/history/:token', (req, res) => {
+  const { deviceId } = req.params;
+  db.all(`SELECT * FROM locations WHERE device_id = ? ORDER BY timestamp ASC`, [deviceId], (err, locations) => {
+    if (err) return res.status(500).json([]);
+    res.json({ locations });
   });
 });
 
-// ===== RENAME =====
-app.post('/api/device/:device_id/rename', authMiddleware, (req,res)=>{
-  const device_id = req.params.device_id;
+// === RENAME DEVICE ===
+app.post('/api/device/:deviceId/rename', (req, res) => {
+  const { deviceId } = req.params;
   const { name } = req.body;
-  db.run(`UPDATE devices SET device_name=? WHERE device_id=?`, [name, device_id], function(err){
-    if(err) return res.status(500).json({error:err.message});
-    res.json({success:true});
+  db.run(`UPDATE devices SET device_name = ? WHERE device_id = ?`, [name, deviceId], function(err) {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true });
   });
 });
 
-// ===== DELETE =====
-app.delete('/api/device/:device_id/:token', authMiddleware, (req,res)=>{
-  const device_id = req.params.device_id;
-  db.run(`DELETE FROM devices WHERE device_id=?`, [device_id], function(err){
-    if(err) return res.status(500).json({error:err.message});
-    db.run(`DELETE FROM locations WHERE device_id=?`, [device_id]);
-    res.json({success:true});
+// === DELETE DEVICE ===
+app.delete('/api/device/:deviceId/:token', (req, res) => {
+  const { deviceId } = req.params;
+  db.run(`DELETE FROM devices WHERE device_id = ?`, [deviceId], function(err) {
+    if (err) return res.status(500).json({ success: false });
+    db.run(`DELETE FROM locations WHERE device_id = ?`, [deviceId]);
+    res.json({ success: true });
   });
 });
 
-// ===== EXPORT =====
-app.get('/api/export/:device_id/:token', authMiddleware, (req,res)=>{
-  const device_id = req.params.device_id;
-  db.get(`SELECT * FROM devices WHERE device_id=?`, [device_id], (err,d)=>{
-    if(err) return res.status(500).json({error:err.message});
-    if(!d) return res.status(404).json({error:'Device not found'});
-    db.all(`SELECT latitude, longitude, timestamp FROM locations WHERE device_id=? ORDER BY timestamp`, [device_id], (err, locs)=>{
-      if(err) return res.status(500).json({error:err.message});
-      res.json({...d, locations: locs});
+// === EXPORT DATA ===
+app.get('/api/export/:deviceId/:token', (req, res) => {
+  const { deviceId } = req.params;
+  db.get(`SELECT * FROM devices WHERE device_id = ?`, [deviceId], (err, device) => {
+    if (err || !device) return res.status(404).json({ error: 'Device not found' });
+    db.all(`SELECT * FROM locations WHERE device_id = ? ORDER BY timestamp ASC`, [deviceId], (err, locations) => {
+      if (err) return res.status(500).json({ error: 'DB error' });
+      res.json({ ...device, locations });
     });
   });
 });
 
-// ===== SIMULATE MOVEMENT =====
-setInterval(()=>{
-  db.all(`SELECT * FROM devices`, [], (err, devices)=>{
-    if(err || !devices) return;
-    devices.forEach(d=>{
-      const lat = d.last_lat + (Math.random()-0.5)*0.01;
-      const lng = d.last_lng + (Math.random()-0.5)*0.01;
-      const timestamp = new Date().toISOString();
-      db.run(`UPDATE devices SET last_lat=?, last_lng=?, last_seen=? WHERE device_id=?`, [lat,lng,timestamp,d.device_id]);
-      db.run(`INSERT INTO locations (device_id, latitude, longitude, timestamp) VALUES (?,?,?,?)`, [d.device_id, lat, lng, timestamp]);
-    });
-  });
-}, 5000);
+// === ADD LOCATION (от агента) ===
+app.post('/api/device/:deviceId/location', (req, res) => {
+  const { deviceId } = req.params;
+  const { latitude, longitude, battery } = req.body;
+  const timestamp = Date.now();
+  const id = uuidv4();
+  db.run(
+    `INSERT INTO locations (id, device_id, latitude, longitude, battery, timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, deviceId, latitude, longitude, battery, timestamp],
+    (err) => {
+      if (err) return res.status(500).json({ success: false });
+      res.json({ success: true });
+    }
+  );
+});
 
-app.listen(PORT, ()=>console.log(`Agent server running on http://localhost:${PORT}`));
+// === CREATE DEVICE (для теста) ===
+app.post('/api/device/create', (req, res) => {
+  const { device_name } = req.body;
+  const device_id = uuidv4();
+  db.run(`INSERT INTO devices (device_id, device_name) VALUES (?, ?)`, [device_id, device_name], (err) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, device_id, device_name });
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
