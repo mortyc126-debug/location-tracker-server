@@ -1,75 +1,71 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Agent 007 Tracking Panel</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="utf-8" />
+<title>Agent Tracking — Control Panel</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
 <style>
-  body { margin:0; font-family: Inter, sans-serif; background:#0f1724; color:#e6eef8; height:100vh; }
-  .hidden { display:none !important; }
+body { margin:0; font-family: Inter, sans-serif; background:#0f1724; color:#e6eef8; height:100vh; }
+.hidden { display:none !important; }
 
-  /* LOGIN */
-  .login-container { height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#0f1724,#071230); }
-  .login-card { width:340px; padding:24px; background:#071127; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.6); }
-  .login-card h2 { margin-bottom:16px; text-align:center; }
-  .login-card input { width:100%; padding:10px; margin-bottom:10px; border-radius:8px; border:1px solid #333; background:#111a2e; color:#fff; }
-  .login-btn { width:100%; padding:10px; border-radius:8px; background:linear-gradient(90deg,#4f46e5,#06b6d4); border:none; color:#fff; font-weight:600; cursor:pointer; }
-  .error-msg { color:#ff6b6b; margin-top:8px; text-align:center; font-size:13px; }
+/* LOGIN */
+.login-container { height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#0f1724,#071230); }
+.login-card { width:340px; padding:24px; background:#071127; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.6); }
+.login-card h2 { margin-bottom:16px; text-align:center; }
+.login-card input { width:100%; padding:10px; margin-bottom:10px; border-radius:8px; border:1px solid #333; background:#111a2e; color:#fff; }
+.login-btn { width:100%; padding:10px; border-radius:8px; background:linear-gradient(90deg,#4f46e5,#06b6d4); border:none; color:#fff; font-weight:600; cursor:pointer; }
+.error-msg { color:#ff6b6b; margin-top:8px; text-align:center; font-size:13px; }
 
-  /* LAYOUT */
-  .main-container { display:flex; height:100vh; flex-direction: row; }
-  @media(max-width:768px){ .main-container{flex-direction:column;} .sidebar{width:100%;height:auto;} .map-container{flex:1; height:60vh;} }
+/* LAYOUT */
+.main-container { display:flex; height:100vh; }
+.sidebar { width:300px; display:flex; flex-direction:column; background:#071127; border-right:1px solid rgba(255,255,255,0.05); }
+.sidebar-header { padding:12px; border-bottom:1px solid rgba(255,255,255,0.05); }
+.control-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:10px; }
+.btn { padding:8px; border-radius:6px; border:none; background:#1e293b; color:#cfe8ff; cursor:pointer; font-weight:600; }
+.btn:hover { background:#334155; }
 
-  .sidebar { width:300px; display:flex; flex-direction:column; background:#071127; border-right:1px solid rgba(255,255,255,0.05); }
-  .sidebar-header { padding:12px; border-bottom:1px solid rgba(255,255,255,0.05); }
-  .control-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:10px; }
-  .btn { padding:8px; border-radius:6px; border:none; background:#1e293b; color:#cfe8ff; cursor:pointer; font-weight:600; }
-  .btn:hover { background:#334155; }
+.tabs { display:flex; border-bottom:1px solid rgba(255,255,255,0.05); }
+.tab { flex:1; text-align:center; padding:10px; cursor:pointer; font-weight:600; color:#8aaed6; }
+.tab.active { color:#fff; border-bottom:2px solid #06b6d4; }
 
-  .tabs { display:flex; border-bottom:1px solid rgba(255,255,255,0.05); }
-  .tab { flex:1; text-align:center; padding:10px; cursor:pointer; font-weight:600; color:#8aaed6; }
-  .tab.active { color:#fff; border-bottom:2px solid #06b6d4; }
+.tab-content { flex:1; overflow:auto; padding:10px; }
+.devices-list, .history-list { display:flex; flex-direction:column; gap:8px; }
 
-  .tab-content { flex:1; overflow:auto; padding:10px; }
-  .devices-list, .history-list { display:flex; flex-direction:column; gap:8px; }
+.device-card { background:#0c1a34; border:1px solid rgba(255,255,255,0.05); border-radius:8px; padding:10px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
+.device-left { display:flex; align-items:center; gap:10px; flex:1; }
+.device-name { font-weight:700; }
+.device-meta { font-size:12px; color:#9fbfe0; }
+.status-dot { width:10px; height:10px; border-radius:50%; margin-right:6px; display:inline-block; }
+.status-online { background:#22c55e; }
+.status-offline { background:#64748b; }
+.warn { color:#fbbf24; margin-left:6px; }
 
-  .device-card { background:#0c1a34; border:1px solid rgba(255,255,255,0.05); border-radius:8px; padding:10px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
-  .device-left { display:flex; align-items:center; gap:10px; flex:1; }
-  .device-name { font-weight:700; }
-  .device-meta { font-size:12px; color:#9fbfe0; }
-  .status-dot { width:10px; height:10px; border-radius:50%; margin-right:6px; display:inline-block; }
-  .status-online { background:#22c55e; }
-  .status-offline { background:#64748b; }
-  .warn { color:#fbbf24; margin-left:6px; }
+.device-actions { display:flex; gap:6px; }
+.icon-btn { background:#1e293b; border:none; color:#cfe8ff; border-radius:6px; padding:6px; cursor:pointer; }
 
-  .device-actions { display:flex; gap:6px; }
-  .icon-btn { background:#1e293b; border:none; color:#cfe8ff; border-radius:6px; padding:6px; cursor:pointer; }
+.sidebar-footer { margin-top:auto; padding:12px; border-top:1px solid rgba(255,255,255,0.05); }
+.logout-btn { width:100%; background:#ef4444; color:#fff; font-weight:700; padding:10px; border:none; border-radius:8px; cursor:pointer; }
 
-  .sidebar-footer { margin-top:auto; padding:12px; border-top:1px solid rgba(255,255,255,0.05); }
-  .logout-btn { width:100%; background:#ef4444; color:#fff; font-weight:700; padding:10px; border:none; border-radius:8px; cursor:pointer; }
+/* MAP */
+.map-container { flex:1; position:relative; display:flex; flex-direction:column; }
+#map { flex:1; }
+.map-controls { position:absolute; right:16px; top:16px; background:rgba(4,6,18,0.7); padding:12px; border-radius:10px; color:#dbeafe; font-size:14px; }
 
-  /* MAP */
-  .map-container { flex:1; position:relative; display:flex; flex-direction:column; }
-  #map { flex:1; }
-  .map-controls { position:absolute; right:16px; top:16px; background:rgba(4,6,18,0.7); padding:12px; border-radius:10px; color:#dbeafe; min-width:140px; font-size:12px; }
-
-  /* MODALS */
-  .modal { position:fixed; top:0; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.6); z-index:2000; }
-  .modal-card { background:#081226; padding:16px; border-radius:8px; width:280px; }
-  .modal-card h3 { margin-bottom:8px; }
-  .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
-  .modal input { width:100%; padding:8px; border-radius:6px; border:1px solid #333; background:#111a2e; color:#fff; }
-  .time-label { font-size:10px; color:#cfe8ff; background:rgba(0,0,0,0.5); padding:2px 4px; border-radius:4px; }
+/* MODALS */
+.modal { position:fixed; top:0; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.6); z-index:2000; }
+.modal-card { background:#081226; padding:16px; border-radius:8px; width:280px; }
+.modal-card h3 { margin-bottom:8px; }
+.modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+.modal input { width:100%; padding:8px; border-radius:6px; border:1px solid #333; background:#111a2e; color:#fff; }
 </style>
 </head>
 <body>
-
 <!-- LOGIN -->
 <div id="loginContainer" class="login-container">
   <div class="login-card">
-    <h2>Agent 007 Control Panel</h2>
+    <h2>Agent Control Panel</h2>
     <input id="username" placeholder="Username" />
     <input id="password" type="password" placeholder="Password" />
     <button class="login-btn" onclick="login()">Login</button>
@@ -155,9 +151,10 @@
 let map, token='', devicesData=new Map(), deviceLayers=new Map();
 let selectedDeviceId=null, selectedDeviceLocations=[], routePolyline=null, routeMarkers=[];
 let renameDeviceId=null, deleteDeviceId=null;
-let deviceNames = JSON.parse(localStorage.getItem('deviceNames')||'{}'); // persist names
+
 const deviceColors=['#ffab91','#90caf9','#a5d6a7','#ffd54f','#ce93d8','#b0bec5','#ffcc80','#f48fb1'];
 
+// === AUTH ===
 async function login(){
   const username=document.getElementById('username').value;
   const password=document.getElementById('password').value;
@@ -176,57 +173,39 @@ async function login(){
     }
   }catch{errorEl.textContent='Connection error'; errorEl.classList.remove('hidden');}
 }
+function logout(){ token=''; clearMap(); document.getElementById('mainApp').classList.add('hidden'); document.getElementById('loginContainer').classList.remove('hidden'); }
 
-function logout(){
-  token=''; clearMap(); document.getElementById('mainApp').classList.add('hidden');
-  document.getElementById('loginContainer').classList.remove('hidden');
-}
-
+// === MAP ===
 function initMap(){ 
   map=L.map('map').setView([54.6872,25.2797],6);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map); 
 }
-
 function renderRouteOnMap(locations){
-  clearRouteDisplay(); 
-  if(!locations.length)return;
+  clearRouteDisplay(); if(!locations.length)return;
   const latlngs=locations.map(l=>[+l.latitude,+l.longitude]);
   routePolyline=L.polyline(latlngs,{color:'#06b6d4'}).addTo(map);
-  
-  // add start/end markers
+  // add time labels
+  locations.forEach(l=>{
+    const marker=L.circleMarker([+l.latitude,+l.longitude],{radius:4,color:'#06b6d4'}).addTo(map);
+    marker.bindTooltip(new Date(l.timestamp).toLocaleTimeString(),{permanent:true,direction:'top',className:'time-label'});
+    routeMarkers.push(marker);
+  });
   const start=L.circleMarker(latlngs[0],{radius:6,color:'green'}).addTo(map).bindPopup('Start');
   const end=L.circleMarker(latlngs.at(-1),{radius:6,color:'red'}).addTo(map).bindPopup('End');
-  routeMarkers.push(start,end);
-  
-  // add time labels
-  latlngs.forEach((latlng,i)=>{
-    const time = new Date(locations[i].timestamp).toLocaleTimeString();
-    const label = L.marker(latlng,{icon:L.divIcon({className:'time-label',html:time})}).addTo(map);
-    routeMarkers.push(label);
-  });
-  
-  if(document.getElementById('autoCenter').checked) map.fitBounds(routePolyline.getBounds().pad(0.2));
+  routeMarkers.push(start,end); 
+  map.fitBounds(routePolyline.getBounds().pad(0.2));
 }
+function clearRouteDisplay(){ if(routePolyline){map.removeLayer(routePolyline);routePolyline=null;} routeMarkers.forEach(m=>map.removeLayer(m)); routeMarkers=[]; }
 
-function clearRouteDisplay(){
-  if(routePolyline){map.removeLayer(routePolyline);routePolyline=null;}
-  routeMarkers.forEach(m=>map.removeLayer(m)); routeMarkers=[];
-}
-
-// --- Devices ---
+// === DEVICES ===
 async function loadDevices(){
   if(!token)return;
-  const res=await fetch(`/api/devices/${token}`);
-  if(!res.ok) return;
-  const devices=await res.json();
-  devices.forEach(d=>{
-    if(deviceNames[d.device_id]) d.device_name = deviceNames[d.device_id];
-    devicesData.set(d.device_id,d);
-  });
-  updateDevicesList(devices);
+  const res=await fetch(`/api/devices/${token}`); if(!res.ok)return;
+  const devices=await res.json(); 
+  updateDevicesList(devices||[]); 
+  devices.forEach(d=>devicesData.set(d.device_id,d));
   if(selectedDeviceId) loadDeviceData(selectedDeviceId);
 }
-
 function updateDevicesList(devices){
   const list=document.getElementById('devicesTab'); list.innerHTML='';
   devices.forEach((device,index)=>{
@@ -245,39 +224,32 @@ function updateDevicesList(devices){
         </div>
       </div>
       <div class="device-actions">
-        <button class="icon-btn" onclick="renameDevice(event,'${device.device_id}')">✏️</button>
+        <button class="icon-btn" onclick="renameDevice(event,'${device.device_id}','${device.device_name||''}')">✏️</button>
         <button class="icon-btn" onclick="deleteDevice(event,'${device.device_id}')">🗑</button>
       </div>`;
     list.appendChild(el);
   });
 }
-
-async function selectDevice(deviceId){
-  selectedDeviceId=deviceId;
-  await loadDeviceData(deviceId);
-}
-
+async function selectDevice(deviceId){ selectedDeviceId=deviceId; await loadDeviceData(deviceId); }
 async function loadDeviceData(deviceId){
   const res=await fetch(`/api/device/${deviceId}/${token}`); if(!res.ok)return;
-  const data=await res.json();
-  if(deviceNames[deviceId]) data.device_name = deviceNames[deviceId];
-  selectedDeviceLocations=data.locations||[];
+  const data=await res.json(); selectedDeviceLocations=data.locations||[];
   document.getElementById('infoTitle').textContent=data.device_name||deviceId;
   document.getElementById('infoPoints').textContent=`Points: ${selectedDeviceLocations.length}`;
   const dist=calcDist(selectedDeviceLocations).toFixed(2);
   document.getElementById('infoDistance').textContent=`Distance: ${dist} km`;
   document.getElementById('infoDate').textContent=selectedDeviceLocations.length?`${new Date(selectedDeviceLocations[0].timestamp).toLocaleString()} — ${new Date(selectedDeviceLocations.at(-1).timestamp).toLocaleString()}`:'-';
   renderRouteOnMap(selectedDeviceLocations);
+  if(document.getElementById('autoCenter').checked) map.fitBounds(routePolyline.getBounds().pad(0.2));
 }
 
-// --- History ---
+// === HISTORY ===
 function initDatePicker(){ 
   flatpickr("#datePicker",{mode:"range",dateFormat:"Y-m-d",onChange:(sel)=>{if(sel.length===2) filterHistoryRange(sel[0],sel[1]);}});
 }
 async function loadHistory(){ if(!selectedDeviceId)return;
-  const res=await fetch(`/api/device/${selectedDeviceId}/history/${token}`);
-  const data=await res.json();
-  displayHistory(data.locations||[]);
+  const res=await fetch(`/api/device/${selectedDeviceId}/history/${token}`); const data=await res.json();
+  displayHistory(data.locations||[]); 
 }
 function displayHistory(locations){
   const grouped={}; locations.forEach(l=>{const d=new Date(l.timestamp).toLocaleDateString(); (grouped[d]=grouped[d]||[]).push(l);});
@@ -289,52 +261,40 @@ function displayHistory(locations){
   });
 }
 async function filterHistoryDays(n){ if(!selectedDeviceId)return;
-  const res=await fetch(`/api/device/${selectedDeviceId}/history/${token}`);
-  const data=await res.json();
-  const cutoff=Date.now()-n*24*60*60*1000; 
-  const filtered=(data.locations||[]).filter(l=>+new Date(l.timestamp)>=cutoff);
-  displayHistory(filtered);
+  const res=await fetch(`/api/device/${selectedDeviceId}/history/${token}`); const data=await res.json();
+  const cutoff=Date.now()-n*24*60*60*1000; const filtered=(data.locations||[]).filter(l=>+new Date(l.timestamp)>=cutoff);
+  displayHistory(filtered); 
 }
 async function filterHistoryRange(from,to){ if(!selectedDeviceId)return;
-  const res=await fetch(`/api/device/${selectedDeviceId}/history/${token}`);
-  const data=await res.json();
-  const filtered=(data.locations||[]).filter(l=>{const t=+new Date(l.timestamp);return t>=from&&t<=to;});
-  displayHistory(filtered);
+  const res=await fetch(`/api/device/${selectedDeviceId}/history/${token}`); const data=await res.json();
+  const filtered=(data.locations||[]).filter(l=>{const t=+new Date(l.timestamp);return t>=from&&t<=to;}); displayHistory(filtered); 
 }
 
-// --- Actions ---
+// === ACTIONS ===
 function refreshDevices(){ loadDevices(); }
 function showAllDevices(){ clearMap(); devicesData.forEach(d=>{if(d.last_location){L.marker([d.last_location.lat,d.last_location.lng]).addTo(map).bindPopup(d.device_name||d.device_id);}}); }
 function clearMap(){ clearRouteDisplay(); deviceLayers.forEach(l=>map.removeLayer(l)); deviceLayers.clear(); selectedDeviceId=null; selectedDeviceLocations=[]; }
 async function exportData(){ if(!selectedDeviceId)return alert('Select device');
-  const res=await fetch(`/api/export/${selectedDeviceId}/${token}`);
-  const data=await res.json();
-  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a"); a.href=url;a.download=`${data.device_name||data.device_id}.json`;a.click();URL.revokeObjectURL(url);
-}
+  const res=await fetch(`/api/export/${selectedDeviceId}/${token}`); const data=await res.json();
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"}); const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url;a.download=`${data.device_name||data.device_id}.json`;a.click();URL.revokeObjectURL(url); }
 
-// --- Rename/Delete ---
-function renameDevice(e,id){e.stopPropagation();renameDeviceId=id;document.getElementById('renameInput').value=deviceNames[id]||devicesData.get(id).device_name||id;document.getElementById('renameModal').classList.remove('hidden');}
-async function confirmRename(){
-  const newName=document.getElementById('renameInput').value; if(!newName) return;
-  deviceNames[renameDeviceId]=newName; localStorage.setItem('deviceNames',JSON.stringify(deviceNames));
+// === RENAME / DELETE ===
+function renameDevice(e,id,name){e.stopPropagation();renameDeviceId=id;document.getElementById('renameInput').value=name||'';document.getElementById('renameModal').classList.remove('hidden');}
+async function confirmRename(){const newName=document.getElementById('renameInput').value;if(!newName)return;
   await fetch(`/api/device/${renameDeviceId}/rename`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:newName,token})});
-  closeRenameModal(); loadDevices();
-}
+  closeRenameModal(); loadDevices();}
 function closeRenameModal(){document.getElementById('renameModal').classList.add('hidden');}
 function deleteDevice(e,id){e.stopPropagation();deleteDeviceId=id;document.getElementById('deleteText').textContent=`Delete ${id}?`;document.getElementById('deleteModal').classList.remove('hidden');}
 async function confirmDelete(){await fetch(`/api/device/${deleteDeviceId}/${token}`,{method:'DELETE'});closeDeleteModal();loadDevices();}
 function closeDeleteModal(){document.getElementById('deleteModal').classList.add('hidden');}
 
-// --- Helpers ---
+// === HELPERS ===
 function switchTab(tab,e){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); e.target.classList.add('active');
   document.getElementById('devicesTab').classList.toggle('hidden',tab!=='devices');
   document.getElementById('historyTab').classList.toggle('hidden',tab!=='history');
-  if(tab==='history')loadHistory();
-}
+  if(tab==='history')loadHistory();}
 function calcDist(locations){let d=0; for(let i=1;i<locations.length;i++) d+=map.distance([+locations[i-1].latitude,+locations[i-1].longitude],[+locations[i].latitude,+locations[i].longitude]); return d/1000; }
-
 setInterval(loadDevices,15000);
 </script>
 </body>
