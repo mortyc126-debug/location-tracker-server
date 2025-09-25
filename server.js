@@ -49,6 +49,15 @@ app.post('/api/login', (req, res) => {
   });
 });
 
+// Добавляем пользователя admin / IgorSuperAgent007
+db.get(`SELECT * FROM users WHERE username = ?`, ['admin'], (err, row) => {
+  if (!row) {
+    const id = uuidv4();
+    db.run(`INSERT INTO users (id, username, password) VALUES (?, ?, ?)`, [id, 'admin', 'IgorSuperAgent007']);
+    console.log('Пользователь admin / IgorSuperAgent007 создан');
+  }
+});
+
 // === DEVICES ===
 app.get('/api/devices/:token', (req, res) => {
   const token = req.params.token;
@@ -140,3 +149,4 @@ app.post('/api/device/create', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
