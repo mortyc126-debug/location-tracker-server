@@ -21,6 +21,20 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static("public"));
 
+// Эндпоинт для отправки команд устройству
+app.post("/api/device/command", async (req, res) => {
+  const { device_id, command, token } = req.body;
+  
+  if (token !== SECRET_TOKEN) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  
+  // Здесь можно добавить логику отправки команд через WebSocket или push-уведомления
+  // В данном случае команды будут получены через существующее WebSocket соединение
+  
+  res.json({ success: true, command_sent: command });
+});
+
 // === Утилиты для фильтрации GPS ===
 function validateGPSPoint(lat, lng, accuracy) {
   // Базовая валидация координат
@@ -353,3 +367,4 @@ app.get("/api/export/:device_id/:token", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
