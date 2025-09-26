@@ -1,16 +1,13 @@
-{
-  `body`: `Создайте файл public/index.html со следующим содержимым:
-
-```html
 <!DOCTYPE html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-    <meta charset=\"UTF-8\">
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OPERATION CONTROL - Agent Tracking System</title>
-    <link rel=\"stylesheet\" href=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\" />
-    <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css\">
-    <link href=\"https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600;700&display=swap\" rel=\"stylesheet\">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
             --primary-gold: #d4af37;
@@ -37,19 +34,6 @@
             height: 100vh;
             overflow: hidden;
             position: relative;
-        }
-
-        body::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: url('data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><defs><pattern id=\"grid\" width=\"10\" height=\"10\" patternUnits=\"userSpaceOnUse\"><path d=\"M 10 0 L 0 0 0 10\" fill=\"none\" stroke=\"%23333\" stroke-width=\"0.5\" opacity=\"0.3\"/></pattern></defs><rect width=\"100\" height=\"100\" fill=\"url(%23grid)\"/></svg>');
-            opacity: 0.1;
-            pointer-events: none;
-            z-index: 1;
         }
 
         .hidden { display: none !important; }
@@ -129,11 +113,6 @@
             letter-spacing: 1px;
         }
 
-        .login-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 30px rgba(212, 175, 55, 0.4);
-        }
-
         .error-msg {
             color: var(--danger-red);
             margin-top: 15px;
@@ -145,18 +124,23 @@
             display: flex;
             height: 100vh;
             position: relative;
-            z-index: 2;
         }
 
         .sidebar {
-            width: 380px;
+            width: 420px;
             background: linear-gradient(180deg, var(--secondary-black), #111);
             border-right: 2px solid var(--primary-gold);
             display: flex;
             flex-direction: column;
             position: relative;
+            transition: transform 0.3s ease;
         }
 
+        .sidebar.collapsed {
+            transform: translateX(-100%);
+        }
+
+        /* === SIDEBAR HEADER === */
         .sidebar-header {
             padding: 20px;
             border-bottom: 1px solid #333;
@@ -174,13 +158,13 @@
 
         .control-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: 1fr 1fr 1fr;
             gap: 10px;
             margin-bottom: 15px;
         }
 
         .btn {
-            padding: 12px;
+            padding: 10px;
             border: 1px solid #444;
             border-radius: 8px;
             background: linear-gradient(145deg, #333, #222);
@@ -188,7 +172,7 @@
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
-            font-size: 13px;
+            font-size: 12px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
@@ -199,14 +183,20 @@
             transform: translateY(-1px);
         }
 
-        .tabs {
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* === NAVIGATION TABS === */
+        .nav-tabs {
             display: flex;
             border-bottom: 1px solid #333;
         }
 
-        .tab {
+        .nav-tab {
             flex: 1;
-            padding: 15px;
+            padding: 12px;
             text-align: center;
             cursor: pointer;
             font-weight: 600;
@@ -214,28 +204,53 @@
             transition: all 0.3s ease;
             text-transform: uppercase;
             letter-spacing: 1px;
-            font-size: 14px;
+            font-size: 13px;
         }
 
-        .tab.active {
+        .nav-tab.active {
             color: var(--primary-gold);
             background: linear-gradient(135deg, #333, #222);
             border-bottom: 2px solid var(--primary-gold);
         }
 
+        /* === TAB CONTENT === */
         .tab-content {
             flex: 1;
-            overflow-y: auto;
-            padding: 20px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
         }
 
-        /* === DEVICE CARDS === */
+        .tab-panel {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* === DEVICE LIST WITH VIRTUALIZATION === */
+        .devices-container {
+            position: relative;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .virtual-list {
+            height: 100%;
+            overflow-y: auto;
+        }
+
         .device-card {
             background: linear-gradient(145deg, #1a1a1a, #222);
             border: 1px solid #333;
             border-radius: 12px;
             padding: 15px;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
             cursor: pointer;
             transition: all 0.3s ease;
             position: relative;
@@ -244,14 +259,19 @@
         .device-card:hover {
             border-color: var(--primary-gold);
             transform: translateY(-2px);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
+        }
+
+        .device-card.selected {
+            border-color: var(--primary-gold);
+            background: linear-gradient(145deg, #2a2a1a, #332211);
         }
 
         .device-header {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
 
         .device-info h3 {
@@ -268,7 +288,7 @@
             font-size: 12px;
         }
 
-        .status-dot {
+        .status-indicator {
             width: 8px;
             height: 8px;
             border-radius: 50%;
@@ -285,37 +305,78 @@
         }
 
         .device-meta {
-            font-size: 12px;
-            color: var(--text-secondary);
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 10px;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
         }
 
         .device-actions {
             display: flex;
-            gap: 8px;
+            gap: 6px;
         }
 
         .icon-btn {
             background: #333;
             border: 1px solid #555;
             color: var(--text-secondary);
-            width: 32px;
-            height: 32px;
-            border-radius: 6px;
+            width: 28px;
+            height: 28px;
+            border-radius: 4px;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
             transition: all 0.3s ease;
-            font-size: 14px;
+            font-size: 12px;
         }
 
         .icon-btn:hover {
             background: var(--primary-gold);
             color: var(--primary-black);
+        }
+
+        /* === ANALYTICS TAB === */
+        .analytics-container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .stat-card {
+            background: linear-gradient(145deg, #1a1a1a, #222);
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--primary-gold);
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .chart-container {
+            background: linear-gradient(145deg, #1a1a1a, #222);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            height: 250px;
         }
 
         /* === MAP CONTAINER === */
@@ -341,6 +402,26 @@
             min-width: 280px;
             backdrop-filter: blur(10px);
             z-index: 1000;
+            transition: transform 0.3s ease;
+        }
+
+        .map-controls.minimized {
+            transform: translateX(260px);
+        }
+
+        .controls-toggle {
+            position: absolute;
+            left: -30px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: var(--primary-gold);
+            color: var(--primary-black);
+            border: none;
+            width: 30px;
+            height: 60px;
+            border-radius: 8px 0 0 8px;
+            cursor: pointer;
+            font-weight: bold;
         }
 
         .info-title {
@@ -348,7 +429,7 @@
             font-size: 16px;
             font-weight: 700;
             color: var(--primary-gold);
-            margin-bottom: 10px;
+            margin-bottom: 15px;
         }
 
         .info-item {
@@ -367,10 +448,27 @@
             font-weight: 600;
         }
 
-        /* === BOTTOM CONTROLS === */
+        /* === MOBILE TOGGLE === */
+        .mobile-toggle {
+            display: none;
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 2000;
+            background: var(--primary-gold);
+            color: var(--primary-black);
+            border: none;
+            border-radius: 8px;
+            width: 44px;
+            height: 44px;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        /* === SIDEBAR FOOTER === */
         .sidebar-footer {
             margin-top: auto;
-            padding: 20px;
+            padding: 15px;
             border-top: 1px solid #333;
             background: linear-gradient(135deg, #111, var(--secondary-black));
         }
@@ -380,13 +478,13 @@
             align-items: center;
             justify-content: space-between;
             margin-bottom: 15px;
+            font-size: 12px;
         }
 
         .auto-center-label {
             display: flex;
             align-items: center;
             gap: 8px;
-            font-size: 14px;
             color: var(--text-secondary);
         }
 
@@ -404,11 +502,6 @@
             letter-spacing: 1px;
         }
 
-        .logout-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 10px 20px rgba(255, 51, 51, 0.3);
-        }
-
         /* === MODALS === */
         .modal {
             position: fixed;
@@ -420,7 +513,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 2000;
+            z-index: 3000;
             backdrop-filter: blur(5px);
         }
 
@@ -451,12 +544,6 @@
             font-size: 16px;
         }
 
-        .modal-input:focus {
-            outline: none;
-            border-color: var(--primary-gold);
-            box-shadow: 0 0 15px rgba(212, 175, 55, 0.3);
-        }
-
         .modal-actions {
             display: flex;
             gap: 15px;
@@ -485,59 +572,61 @@
             border-color: var(--danger-red);
         }
 
-        .modal-btn:hover {
-            transform: translateY(-1px);
+        /* === LOADING STATES === */
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #333;
+            border-radius: 50%;
+            border-top-color: var(--primary-gold);
+            animation: spin 1s ease-in-out infinite;
         }
 
-        /* === HISTORY === */
-        .history-controls {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
 
-        .history-controls input {
-            flex: 1;
-            padding: 10px;
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
             background: rgba(0, 0, 0, 0.7);
-            border: 1px solid #333;
-            border-radius: 6px;
-            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
         }
 
-        .history-item {
-            background: linear-gradient(145deg, #1a1a1a, #222);
-            border: 1px solid #333;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 10px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            font-size: 14px;
-        }
-
-        .history-item:hover {
-            border-color: var(--accent-blue);
-            background: linear-gradient(145deg, #222, #333);
-        }
-
-        /* === MOBILE RESPONSIVE === */
+        /* === RESPONSIVE DESIGN === */
         @media (max-width: 768px) {
-            .main-container {
-                flex-direction: column;
+            .mobile-toggle {
+                display: block;
             }
             
             .sidebar {
-                width: 100%;
-                height: 50vh;
+                position: fixed;
+                top: 0;
+                left: 0;
+                bottom: 0;
+                z-index: 1500;
+                width: 100vw;
+                max-width: 400px;
+                transform: translateX(-100%);
+            }
+            
+            .sidebar.open {
+                transform: translateX(0);
             }
             
             .map-container {
-                height: 50vh;
+                width: 100%;
             }
             
             .map-controls {
-                top: 10px;
+                top: 80px;
                 right: 10px;
                 left: 10px;
                 min-width: auto;
@@ -554,135 +643,180 @@
         }
 
         @media (max-width: 480px) {
-            .sidebar {
-                height: 60vh;
-            }
-            
-            .map-container {
-                height: 40vh;
-            }
-            
             .control-grid {
                 grid-template-columns: 1fr;
             }
-        }
-
-        /* === LOADING ANIMATION === */
-        .loading {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid #333;
-            border-radius: 50%;
-            border-top-color: var(--primary-gold);
-            animation: spin 1s ease-in-out infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
-
-<body>
+  <body>
     <!-- LOGIN SCREEN -->
-    <div id=\"loginContainer\" class=\"login-container\">
-        <div class=\"login-card\">
-            <h1 class=\"login-title\">OPERATION CONTROL</h1>
-            <p class=\"login-subtitle\">Agent Tracking System</p>
-            <input id=\"username\" class=\"login-input\" placeholder=\"Agent ID\" />
-            <input id=\"password\" class=\"login-input\" type=\"password\" placeholder=\"Access Code\" />
-            <button class=\"login-btn\" onclick=\"login()\">INITIATE ACCESS</button>
-            <div id=\"errorMsg\" class=\"error-msg hidden\"></div>
+    <div id="loginContainer" class="login-container">
+        <div class="login-card">
+            <h1 class="login-title">OPERATION CONTROL</h1>
+            <p class="login-subtitle">Agent Tracking System</p>
+            <input id="username" class="login-input" placeholder="Agent ID" />
+            <input id="password" class="login-input" type="password" placeholder="Access Code" />
+            <button class="login-btn" onclick="login()">INITIATE ACCESS</button>
+            <div id="errorMsg" class="error-msg hidden"></div>
         </div>
     </div>
+
+    <!-- MOBILE TOGGLE -->
+    <button class="mobile-toggle" id="mobileToggle" onclick="toggleSidebar()">☰</button>
 
     <!-- MAIN APPLICATION -->
-    <div id=\"mainApp\" class=\"main-container hidden\">
-        <div class=\"sidebar\">
-            <div class=\"sidebar-header\">
-                <h2 class=\"mission-title\">MISSION CONTROL</h2>
-                <div class=\"control-grid\">
-                    <button class=\"btn\" onclick=\"refreshDevices()\">🔄 REFRESH</button>
-                    <button class=\"btn\" onclick=\"showAllDevices()\">👁 VIEW ALL</button>
-                    <button class=\"btn\" onclick=\"clearMap()\">🗑 CLEAR</button>
-                    <button class=\"btn\" onclick=\"exportData()\">📊 EXPORT</button>
+    <div id="mainApp" class="main-container hidden">
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h2 class="mission-title">MISSION CONTROL</h2>
+                <div class="control-grid">
+                    <button class="btn" onclick="refreshDevices()" id="refreshBtn">
+                        <span class="loading-spinner hidden" id="refreshSpinner"></span>
+                        🔄 REFRESH
+                    </button>
+                    <button class="btn" onclick="showAllDevices()">👁 VIEW ALL</button>
+                    <button class="btn" onclick="clearMap()">🗑 CLEAR</button>
+                    <button class="btn" onclick="exportData()">📊 EXPORT</button>
+                    <button class="btn" onclick="toggleFullscreen()">⛶ FULLSCREEN</button>
+                    <button class="btn" onclick="showAnalytics()" id="analyticsBtn">📈 STATS</button>
                 </div>
             </div>
 
-            <div class=\"tabs\">
-                <div class=\"tab active\" onclick=\"switchTab('devices', event)\">AGENTS</div>
-                <div class=\"tab\" onclick=\"switchTab('history', event)\">HISTORY</div>
+            <div class="nav-tabs">
+                <div class="nav-tab active" onclick="switchTab('devices', event)">AGENTS</div>
+                <div class="nav-tab" onclick="switchTab('analytics', event)">ANALYTICS</div>
+                <div class="nav-tab" onclick="switchTab('history', event)">HISTORY</div>
             </div>
 
-            <div class=\"tab-content\">
-                <div id=\"devicesTab\" class=\"devices-list\"></div>
-                <div id=\"historyTab\" class=\"history-list hidden\">
-                    <div class=\"history-controls\">
-                        <button class=\"btn\" onclick=\"filterHistoryDays(1)\">24H</button>
-                        <button class=\"btn\" onclick=\"filterHistoryDays(7)\">7D</button>
-                        <button class=\"btn\" onclick=\"filterHistoryDays(30)\">30D</button>
-                        <input id=\"datePicker\" placeholder=\"Custom range...\" />
+            <div class="tab-content">
+                <!-- DEVICES TAB -->
+                <div id="devicesPanel" class="tab-panel active">
+                    <div class="devices-container">
+                        <div id="devicesSearch" class="search-container" style="margin-bottom: 15px;">
+                            <input type="text" placeholder="Search agents..." 
+                                   style="width: 100%; padding: 8px; background: #222; border: 1px solid #444; 
+                                          border-radius: 6px; color: #fff;" 
+                                   onkeyup="filterDevices(this.value)">
+                        </div>
+                        <div class="virtual-list" id="devicesList">
+                            <div id="devicesContent"></div>
+                        </div>
                     </div>
-                    <div id=\"historyList\"></div>
+                </div>
+
+                <!-- ANALYTICS TAB -->
+                <div id="analyticsPanel" class="tab-panel">
+                    <div class="analytics-container">
+                        <div class="stats-grid" id="statsGrid">
+                            <div class="stat-card">
+                                <div class="stat-value" id="totalDistance">0</div>
+                                <div class="stat-label">Total Distance (km)</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value" id="totalPoints">0</div>
+                                <div class="stat-label">Data Points</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value" id="avgBattery">0%</div>
+                                <div class="stat-label">Avg Battery</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value" id="activeDays">0</div>
+                                <div class="stat-label">Active Days</div>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="analyticsChart"></canvas>
+                        </div>
+                        <div style="display: flex; gap: 10px; margin-top: 10px;">
+                            <button class="btn" onclick="loadAnalytics(1)">24H</button>
+                            <button class="btn" onclick="loadAnalytics(7)">7 DAYS</button>
+                            <button class="btn" onclick="loadAnalytics(30)">30 DAYS</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- HISTORY TAB -->
+                <div id="historyPanel" class="tab-panel">
+                    <div style="display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap;">
+                        <button class="btn" onclick="filterHistoryDays(1)">24H</button>
+                        <button class="btn" onclick="filterHistoryDays(7)">7D</button>
+                        <button class="btn" onclick="filterHistoryDays(30)">30D</button>
+                        <input id="datePicker" placeholder="Custom range..." 
+                               style="flex: 1; padding: 8px; background: #222; border: 1px solid #444; 
+                                      border-radius: 6px; color: #fff; min-width: 120px;" />
+                    </div>
+                    <div id="historyList" class="virtual-list" style="flex: 1; overflow-y: auto;"></div>
                 </div>
             </div>
 
-            <div class=\"sidebar-footer\">
-                <div class=\"footer-controls\">
-                    <label class=\"auto-center-label\">
-                        <input type=\"checkbox\" id=\"autoCenter\" />
+            <div class="sidebar-footer">
+                <div class="footer-controls">
+                    <label class="auto-center-label">
+                        <input type="checkbox" id="autoCenter" />
                         Auto-center tracking
                     </label>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="icon-btn" onclick="toggleMapControls()" title="Toggle Info Panel">📊</button>
+                        <button class="icon-btn" onclick="changeMapStyle()" title="Map Style" id="mapStyleBtn">🗺</button>
+                    </div>
                 </div>
-                <button class=\"logout-btn\" onclick=\"logout()\">🚪 END MISSION</button>
+                <button class="logout-btn" onclick="logout()">🚪 END MISSION</button>
             </div>
         </div>
 
-        <div class=\"map-container\">
-            <div class=\"map-controls\">
-                <h4 id=\"infoTitle\" class=\"info-title\">NO AGENT SELECTED</h4>
-                <div class=\"info-item\">
-                    <span class=\"info-label\">Status:</span>
-                    <span id=\"infoStatus\" class=\"info-value\">Standby</span>
+        <div class="map-container">
+            <div class="map-controls" id="mapControls">
+                <button class="controls-toggle" onclick="toggleMapControls()">◀</button>
+                <h4 id="infoTitle" class="info-title">NO AGENT SELECTED</h4>
+                <div class="info-item">
+                    <span class="info-label">Status:</span>
+                    <span id="infoStatus" class="info-value">Standby</span>
                 </div>
-                <div class=\"info-item\">
-                    <span class=\"info-label\">Last Contact:</span>
-                    <span id=\"infoDate\" class=\"info-value\">Unknown</span>
+                <div class="info-item">
+                    <span class="info-label">Last Contact:</span>
+                    <span id="infoDate" class="info-value">Unknown</span>
                 </div>
-                <div class=\"info-item\">
-                    <span class=\"info-label\">Data Points:</span>
-                    <span id=\"infoPoints\" class=\"info-value\">0</span>
+                <div class="info-item">
+                    <span class="info-label">Data Points:</span>
+                    <span id="infoPoints" class="info-value">0</span>
                 </div>
-                <div class=\"info-item\">
-                    <span class=\"info-label\">Distance:</span>
-                    <span id=\"infoDistance\" class=\"info-value\">0 km</span>
+                <div class="info-item">
+                    <span class="info-label">Distance:</span>
+                    <span id="infoDistance" class="info-value">0 km</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Filtered:</span>
+                    <span id="infoFiltered" class="info-value">0</span>
                 </div>
             </div>
-            <div id=\"map\"></div>
+            <div id="map"></div>
+            <div class="loading-overlay hidden" id="mapLoading">
+                <div class="loading-spinner"></div>
+            </div>
         </div>
     </div>
 
-    <!-- RENAME MODAL -->
-    <div id=\"renameModal\" class=\"modal hidden\">
-        <div class=\"modal-card\">
-            <h3 class=\"modal-title\">AGENT CODENAME</h3>
-            <input id=\"renameInput\" class=\"modal-input\" placeholder=\"Enter new codename...\" />
-            <div class=\"modal-actions\">
-                <button class=\"modal-btn\" onclick=\"closeRenameModal()\">Cancel</button>
-                <button class=\"modal-btn primary\" onclick=\"confirmRename()\">Confirm</button>
+    <!-- MODALS -->
+    <div id="renameModal" class="modal hidden">
+        <div class="modal-card">
+            <h3 class="modal-title">AGENT CODENAME</h3>
+            <input id="renameInput" class="modal-input" placeholder="Enter new codename..." />
+            <div class="modal-actions">
+                <button class="modal-btn" onclick="closeRenameModal()">Cancel</button>
+                <button class="modal-btn primary" onclick="confirmRename()">Confirm</button>
             </div>
         </div>
     </div>
 
-    <!-- DELETE MODAL -->
-    <div id=\"deleteModal\" class=\"modal hidden\">
-        <div class=\"modal-card\">
-            <h3`,
-  `kind`: `other`,
-  `summary_title`: `Улучшенный интерфейс панели управления в стиле агента 007`
-}
-<h3 class="modal-title">TERMINATE AGENT</h3>
+    <div id="deleteModal" class="modal hidden">
+        <div class="modal-card">
+            <h3 class="modal-title">TERMINATE AGENT</h3>
             <p id="deleteText">This action will permanently remove all agent data. Confirm termination?</p>
             <div class="modal-actions">
                 <button class="modal-btn" onclick="closeDeleteModal()">Cancel</button>
@@ -691,8 +825,10 @@
         </div>
     </div>
 
+    <!-- Scripts -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+
     <script>
         // === GLOBAL STATE ===
         let map, token = '';
@@ -704,6 +840,14 @@
         let renameDeviceId = null;
         let deleteDeviceId = null;
         let refreshInterval = null;
+        let analyticsChart = null;
+        let currentMapStyle = 'dark';
+        let filteredDevices = [];
+
+        // Performance optimization
+        let isLoading = false;
+        let lastRefreshTime = 0;
+        const REFRESH_COOLDOWN = 2000; // 2 seconds
 
         // === AUTHENTICATION ===
         async function login() {
@@ -715,6 +859,10 @@
                 showError('Please enter both Agent ID and Access Code');
                 return;
             }
+
+            const loginBtn = document.querySelector('.login-btn');
+            loginBtn.innerHTML = '<span class="loading-spinner"></span> CONNECTING...';
+            loginBtn.disabled = true;
 
             errorEl.classList.add('hidden');
             
@@ -736,6 +884,9 @@
                 }
             } catch (error) {
                 showError('Connection failed - Check network');
+            } finally {
+                loginBtn.innerHTML = 'INITIATE ACCESS';
+                loginBtn.disabled = false;
             }
         }
 
@@ -744,6 +895,10 @@
             localStorage.removeItem('agent_token');
             clearRefreshInterval();
             clearMap();
+            if (analyticsChart) {
+                analyticsChart.destroy();
+                analyticsChart = null;
+            }
             document.getElementById('mainApp').classList.add('hidden');
             document.getElementById('loginContainer').classList.remove('hidden');
             document.getElementById('username').value = '';
@@ -773,22 +928,69 @@
                 zoomControl: false
             }).setView([55.7558, 37.6176], 10);
 
-            // Dark theme map
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '© OpenStreetMap contributors © CARTO',
-                subdomains: 'abcd',
-                maxZoom: 19
-            }).addTo(map);
+            updateMapStyle();
 
             // Custom zoom control
             L.control.zoom({
                 position: 'bottomright'
             }).addTo(map);
+
+            // Add scale control
+            L.control.scale({
+                position: 'bottomleft'
+            }).addTo(map);
         }
 
-        // === DEVICE MANAGEMENT ===
+        function updateMapStyle() {
+            if (!map) return;
+
+            // Remove existing tile layer
+            map.eachLayer(layer => {
+                if (layer instanceof L.TileLayer) {
+                    map.removeLayer(layer);
+                }
+            });
+
+            // Add new tile layer based on style
+            let tileUrl, attribution;
+            
+            if (currentMapStyle === 'dark') {
+                tileUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+                attribution = '© OpenStreetMap contributors © CARTO';
+            } else {
+                tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+                attribution = '© OpenStreetMap contributors';
+            }
+
+            L.tileLayer(tileUrl, {
+                attribution: attribution,
+                maxZoom: 19
+            }).addTo(map);
+        }
+
+        function changeMapStyle() {
+            currentMapStyle = currentMapStyle === 'dark' ? 'light' : 'dark';
+            updateMapStyle();
+            
+            const btn = document.getElementById('mapStyleBtn');
+            btn.textContent = currentMapStyle === 'dark' ? '🌙' : '☀️';
+        }
+
+        // === DEVICE MANAGEMENT WITH OPTIMIZATION ===
         async function loadDevices() {
-            if (!token) return;
+            if (!token || isLoading) return;
+            
+            // Prevent spam requests
+            const now = Date.now();
+            if (now - lastRefreshTime < REFRESH_COOLDOWN) return;
+            lastRefreshTime = now;
+
+            isLoading = true;
+            const spinner = document.getElementById('refreshSpinner');
+            const refreshBtn = document.getElementById('refreshBtn');
+            
+            spinner.classList.remove('hidden');
+            refreshBtn.disabled = true;
             
             try {
                 const res = await fetch(`/api/devices/${token}`);
@@ -801,23 +1003,40 @@
                 }
                 
                 const devices = await res.json();
-                updateDevicesList(devices || []);
-                
+                devicesData.clear();
                 devices.forEach(d => devicesData.set(d.device_id, d));
                 
+                updateDevicesList(devices);
+                
+                // Update selected device if exists
                 if (selectedDeviceId && devicesData.has(selectedDeviceId)) {
                     loadDeviceData(selectedDeviceId);
                 }
             } catch (error) {
                 console.error('Error loading devices:', error);
+                showError('Failed to load devices');
+            } finally {
+                isLoading = false;
+                spinner.classList.add('hidden');
+                refreshBtn.disabled = false;
             }
         }
 
         function updateDevicesList(devices) {
-            const list = document.getElementById('devicesTab');
-            list.innerHTML = '';
+            filteredDevices = devices;
+            renderDevicesList();
+        }
 
-            devices.forEach((device) => {
+        function renderDevicesList() {
+            const container = document.getElementById('devicesContent');
+            container.innerHTML = '';
+
+            if (filteredDevices.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">No agents detected</div>';
+                return;
+            }
+
+            filteredDevices.forEach((device) => {
                 const lastSeen = device.last_seen ? new Date(device.last_seen) : null;
                 const isOnline = lastSeen && (Date.now() - lastSeen.getTime() < 600000); // 10 minutes
                 const lowBattery = (device.battery || 0) < 20;
@@ -832,6 +1051,9 @@
 
                 const deviceCard = document.createElement('div');
                 deviceCard.className = 'device-card';
+                if (selectedDeviceId === device.device_id) {
+                    deviceCard.classList.add('selected');
+                }
                 deviceCard.onclick = () => selectDevice(device.device_id);
                 
                 deviceCard.innerHTML = `
@@ -839,7 +1061,7 @@
                         <div class="device-info">
                             <h3>${device.device_name || `Agent-${device.device_id.slice(0, 8)}`}</h3>
                             <div class="device-status">
-                                <span class="status-dot ${statusClass}"></span>
+                                <span class="status-indicator ${statusClass}"></span>
                                 <span>${statusText}</span>
                             </div>
                         </div>
@@ -856,29 +1078,30 @@
                     </div>
                 `;
                 
-                list.appendChild(deviceCard);
+                container.appendChild(deviceCard);
             });
+        }
 
-            if (devices.length === 0) {
-                list.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">No agents detected</div>';
-            }
+        function filterDevices(searchTerm) {
+            const term = searchTerm.toLowerCase();
+            filteredDevices = Array.from(devicesData.values()).filter(device => {
+                const name = (device.device_name || device.device_id).toLowerCase();
+                return name.includes(term);
+            });
+            renderDevicesList();
         }
 
         async function selectDevice(deviceId) {
             selectedDeviceId = deviceId;
-            
-            // Update UI to show selected state
-            document.querySelectorAll('.device-card').forEach(card => {
-                card.style.borderColor = '#333';
-            });
-            
-            event.currentTarget.style.borderColor = 'var(--primary-gold)';
-            
+            renderDevicesList(); // Update selection visually
             await loadDeviceData(deviceId);
         }
 
         async function loadDeviceData(deviceId) {
             if (!token) return;
+            
+            const mapLoading = document.getElementById('mapLoading');
+            mapLoading.classList.remove('hidden');
             
             try {
                 const res = await fetch(`/api/device/${deviceId}/${token}`);
@@ -895,12 +1118,16 @@
                 }
             } catch (error) {
                 console.error('Error loading device data:', error);
+                showError('Failed to load device data');
+            } finally {
+                mapLoading.classList.add('hidden');
             }
         }
 
         function updateMapInfo(data) {
             document.getElementById('infoTitle').textContent = data.device_name || `Agent-${data.device_id.slice(0, 8)}`;
-            document.getElementById('infoPoints').textContent = selectedDeviceLocations.length;
+            document.getElementById('infoPoints').textContent = data.total_points || selectedDeviceLocations.length;
+            document.getElementById('infoFiltered').textContent = selectedDeviceLocations.length;
             
             const distance = calculateTotalDistance(selectedDeviceLocations);
             document.getElementById('infoDistance').textContent = `${distance.toFixed(2)} km`;
@@ -916,26 +1143,32 @@
                 document.getElementById('infoStatus').textContent = 'NO SIGNAL';
             }
         }
-
-        // === MAP RENDERING ===
+// === MAP RENDERING WITH OPTIMIZATION ===
         function renderRouteOnMap(locations) {
             clearRouteDisplay();
             
             if (!locations || locations.length === 0) return;
             
-            const latlngs = locations.map(l => [parseFloat(l.latitude), parseFloat(l.longitude)]);
+            // Optimize for large datasets - sample points if too many
+            let processedLocations = locations;
+            if (locations.length > 500) {
+                processedLocations = sampleLocations(locations, 500);
+            }
             
-            // Draw route polyline
+            const latlngs = processedLocations.map(l => [parseFloat(l.latitude), parseFloat(l.longitude)]);
+            
+            // Draw route polyline with better styling
             routePolyline = L.polyline(latlngs, {
                 color: '#00d4ff',
                 weight: 3,
-                opacity: 0.8
+                opacity: 0.8,
+                smoothFactor: 1.0
             }).addTo(map);
             
             // Add start marker
             if (latlngs.length > 0) {
                 const startMarker = L.circleMarker(latlngs[0], {
-                    radius: 8,
+                    radius: 10,
                     fillColor: '#00ff88',
                     color: '#fff',
                     weight: 2,
@@ -944,8 +1177,9 @@
                 
                 startMarker.bindPopup(`
                     <strong>START POINT</strong><br>
-                    Time: ${formatDateTime(new Date(locations[0].timestamp))}<br>
-                    Accuracy: ${locations[0].accuracy}m
+                    Time: ${formatDateTime(new Date(processedLocations[0].timestamp))}<br>
+                    Accuracy: ${processedLocations[0].accuracy}m<br>
+                    Battery: ${processedLocations[0].battery}%
                 `);
                 
                 routeMarkers.push(startMarker);
@@ -954,16 +1188,16 @@
             // Add end marker
             if (latlngs.length > 1) {
                 const endMarker = L.circleMarker(latlngs[latlngs.length - 1], {
-                    radius: 8,
+                    radius: 10,
                     fillColor: '#ff3333',
                     color: '#fff',
                     weight: 2,
                     fillOpacity: 1
                 }).addTo(map);
                 
-                const lastLocation = locations[locations.length - 1];
+                const lastLocation = processedLocations[processedLocations.length - 1];
                 endMarker.bindPopup(`
-                    <strong>LAST POSITION</strong><br>
+                    <strong>CURRENT POSITION</strong><br>
                     Time: ${formatDateTime(new Date(lastLocation.timestamp))}<br>
                     Accuracy: ${lastLocation.accuracy}m<br>
                     Battery: ${lastLocation.battery}%
@@ -973,28 +1207,43 @@
             }
             
             // Add time markers for long routes
-            if (locations.length > 2) {
-                addTimeMarkers(locations);
+            if (processedLocations.length > 2) {
+                addTimeMarkers(processedLocations);
             }
         }
 
+        function sampleLocations(locations, maxPoints) {
+            if (locations.length <= maxPoints) return locations;
+            
+            const step = Math.floor(locations.length / maxPoints);
+            const sampled = [locations[0]]; // Always keep first
+            
+            for (let i = step; i < locations.length - 1; i += step) {
+                sampled.push(locations[i]);
+            }
+            
+            sampled.push(locations[locations.length - 1]); // Always keep last
+            return sampled;
+        }
+
         function addTimeMarkers(locations) {
-            const interval = Math.max(1, Math.floor(locations.length / 10));
+            const interval = Math.max(1, Math.floor(locations.length / 8));
             
             for (let i = interval; i < locations.length - 1; i += interval) {
                 const location = locations[i];
                 const timeMarker = L.circleMarker([parseFloat(location.latitude), parseFloat(location.longitude)], {
-                    radius: 4,
+                    radius: 6,
                     fillColor: '#d4af37',
                     color: '#fff',
                     weight: 1,
-                    fillOpacity: 0.8
+                    fillOpacity: 0.9
                 }).addTo(map);
                 
                 timeMarker.bindPopup(`
-                    <strong>CHECKPOINT</strong><br>
+                    <strong>CHECKPOINT ${Math.floor(i/interval)}</strong><br>
                     Time: ${formatDateTime(new Date(location.timestamp))}<br>
-                    Battery: ${location.battery}%
+                    Battery: ${location.battery}%<br>
+                    Accuracy: ${location.accuracy}m
                 `);
                 
                 routeMarkers.push(timeMarker);
@@ -1017,9 +1266,109 @@
             }
         }
 
+        // === ANALYTICS SYSTEM ===
+        async function loadAnalytics(days = 7) {
+            if (!selectedDeviceId) {
+                showError('Please select an agent first');
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/analytics/${selectedDeviceId}/${token}?days=${days}`);
+                if (!res.ok) throw new Error('Failed to load analytics');
+                
+                const data = await res.json();
+                updateAnalyticsDisplay(data);
+                updateAnalyticsChart(data);
+            } catch (error) {
+                console.error('Error loading analytics:', error);
+                showError('Failed to load analytics');
+            }
+        }
+
+        function updateAnalyticsDisplay(data) {
+            document.getElementById('totalDistance').textContent = data.total_distance || '0';
+            document.getElementById('totalPoints').textContent = data.total_points || '0';
+            
+            // Calculate average battery
+            const dailyStats = Object.values(data.daily_stats || {});
+            const avgBattery = dailyStats.length > 0 
+                ? Math.round(dailyStats.reduce((sum, day) => sum + day.avgBattery, 0) / dailyStats.length)
+                : 0;
+            document.getElementById('avgBattery').textContent = avgBattery + '%';
+            
+            document.getElementById('activeDays').textContent = dailyStats.length;
+        }
+
+        function updateAnalyticsChart(data) {
+            const ctx = document.getElementById('analyticsChart');
+            if (!ctx) return;
+
+            // Destroy existing chart
+            if (analyticsChart) {
+                analyticsChart.destroy();
+            }
+
+            const dailyStats = data.daily_stats || {};
+            const dates = Object.keys(dailyStats).sort();
+            const distances = dates.map(date => dailyStats[date].distance || 0);
+            const batteries = dates.map(date => dailyStats[date].avgBattery || 0);
+
+            analyticsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: dates.map(date => new Date(date).toLocaleDateString()),
+                    datasets: [{
+                        label: 'Distance (km)',
+                        data: distances,
+                        borderColor: '#00d4ff',
+                        backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                        yAxisID: 'y'
+                    }, {
+                        label: 'Battery (%)',
+                        data: batteries,
+                        borderColor: '#d4af37',
+                        backgroundColor: 'rgba(212, 175, 55, 0.1)',
+                        yAxisID: 'y1'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#ffffff'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#cccccc' },
+                            grid: { color: '#333333' }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            ticks: { color: '#00d4ff' },
+                            grid: { color: '#333333' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            ticks: { color: '#d4af37' },
+                            grid: { drawOnChartArea: false }
+                        }
+                    }
+                }
+            });
+        }
+
         // === CONTROL FUNCTIONS ===
-        function refreshDevices() {
-            loadDevices();
+        async function refreshDevices() {
+            await loadDevices();
         }
 
         function showAllDevices() {
@@ -1055,16 +1404,14 @@
             document.getElementById('infoDate').textContent = 'Unknown';
             document.getElementById('infoPoints').textContent = '0';
             document.getElementById('infoDistance').textContent = '0 km';
+            document.getElementById('infoFiltered').textContent = '0';
             
-            // Reset device card borders
-            document.querySelectorAll('.device-card').forEach(card => {
-                card.style.borderColor = '#333';
-            });
+            renderDevicesList(); // Update selection
         }
 
         async function exportData() {
             if (!selectedDeviceId) {
-                alert('Please select an agent first');
+                showError('Please select an agent first');
                 return;
             }
             
@@ -1072,15 +1419,82 @@
                 const res = await fetch(`/api/export/${selectedDeviceId}/${token}`);
                 const data = await res.json();
                 
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                // Multiple export formats
+                const format = confirm('Export as GPX for GPS devices? (Cancel for JSON)');
+                
+                let blob, filename;
+                if (format) {
+                    const gpxData = convertToGPX(data);
+                    blob = new Blob([gpxData], { type: 'application/gpx+xml' });
+                    filename = `${data.device_name || data.device_id}_track.gpx`;
+                } else {
+                    blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                    filename = `${data.device_name || data.device_id}_export.json`;
+                }
+                
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `${data.device_name || data.device_id}_export.json`;
+                a.download = filename;
                 a.click();
                 URL.revokeObjectURL(url);
             } catch (error) {
-                alert('Export failed');
+                showError('Export failed');
+            }
+        }
+
+        function convertToGPX(data) {
+            let gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Agent Tracker">
+  <metadata>
+    <name>${data.device_name}</name>
+    <time>${new Date().toISOString()}</time>
+  </metadata>
+  <trk>
+    <name>${data.device_name} Track</name>
+    <trkseg>`;
+            
+            data.locations.forEach(loc => {
+                gpx += `
+      <trkpt lat="${loc.latitude}" lon="${loc.longitude}">
+        <time>${new Date(loc.timestamp).toISOString()}</time>
+      </trkpt>`;
+            });
+            
+            gpx += `
+    </trkseg>
+  </trk>
+</gpx>`;
+            
+            return gpx;
+        }
+
+        // === UI CONTROLS ===
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('open');
+        }
+
+        function toggleMapControls() {
+            const controls = document.getElementById('mapControls');
+            const toggle = controls.querySelector('.controls-toggle');
+            
+            controls.classList.toggle('minimized');
+            toggle.textContent = controls.classList.contains('minimized') ? '▶' : '◀';
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        function showAnalytics() {
+            switchTab('analytics', { target: document.querySelector('.nav-tab:nth-child(2)') });
+            if (selectedDeviceId) {
+                loadAnalytics();
             }
         }
 
@@ -1111,7 +1525,7 @@
                     loadDevices();
                 }
             } catch (error) {
-                alert('Rename failed');
+                showError('Rename failed');
             }
         }
 
@@ -1143,7 +1557,7 @@
                     loadDevices();
                 }
             } catch (error) {
-                alert('Delete failed');
+                showError('Delete failed');
             }
         }
 
@@ -1156,6 +1570,7 @@
             flatpickr("#datePicker", {
                 mode: "range",
                 dateFormat: "Y-m-d",
+                maxDate: "today",
                 onChange: function(selectedDates) {
                     if (selectedDates.length === 2) {
                         filterHistoryRange(selectedDates[0], selectedDates[1]);
@@ -1195,26 +1610,33 @@
                     const distance = calculateTotalDistance(dayLocations);
                     
                     const item = document.createElement('div');
-                    item.className = 'history-item';
+                    item.className = 'device-card';
+                    item.style.marginBottom = '10px';
                     item.onclick = () => {
                         selectedDeviceLocations = dayLocations;
                         renderRouteOnMap(dayLocations);
                         updateMapInfo({
                             device_name: devicesData.get(selectedDeviceId)?.device_name,
-                            device_id: selectedDeviceId
+                            device_id: selectedDeviceId,
+                            total_points: dayLocations.length
                         });
                     };
                     
                     item.innerHTML = `
-                        <strong>${date}</strong><br>
-                        ${dayLocations.length} data points • ${distance.toFixed(2)} km traveled
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong>${date}</strong><br>
+                                <small>${dayLocations.length} points • ${distance.toFixed(2)} km</small>
+                            </div>
+                            <div style="color: var(--primary-gold);">▶</div>
+                        </div>
                     `;
                     
                     historyList.appendChild(item);
                 });
         }
 
-        async function filterHistoryDays(days) {
+        function filterHistoryDays(days) {
             if (!selectedDeviceId) return;
             
             const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
@@ -1227,7 +1649,7 @@
 
         function filterHistoryRange(fromDate, toDate) {
             const from = fromDate.getTime();
-            const to = toDate.getTime() + (24 * 60 * 60 * 1000); // Include end day
+            const to = toDate.getTime() + (24 * 60 * 60 * 1000);
             
             const filtered = selectedDeviceLocations.filter(l => {
                 const timestamp = new Date(l.timestamp).getTime();
@@ -1239,16 +1661,20 @@
 
         // === TAB MANAGEMENT ===
         function switchTab(tabName, event) {
-            document.querySelectorAll('.tab').forEach(tab => 
+            document.querySelectorAll('.nav-tab').forEach(tab => 
                 tab.classList.remove('active')
             );
             event.target.classList.add('active');
             
-            document.getElementById('devicesTab').classList.toggle('hidden', tabName !== 'devices');
-            document.getElementById('historyTab').classList.toggle('hidden', tabName !== 'history');
+            document.querySelectorAll('.tab-panel').forEach(panel => 
+                panel.classList.remove('active')
+            );
+            document.getElementById(tabName + 'Panel').classList.add('active');
             
             if (tabName === 'history' && selectedDeviceId) {
                 loadHistory();
+            } else if (tabName === 'analytics' && selectedDeviceId) {
+                loadAnalytics();
             }
         }
 
@@ -1267,11 +1693,11 @@
                 );
             }
             
-            return totalDistance / 1000; // Convert to km
+            return totalDistance / 1000;
         }
 
         function getDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371e3; // Earth radius in meters
+            const R = 6371e3;
             const φ1 = lat1 * Math.PI / 180;
             const φ2 = lat2 * Math.PI / 180;
             const Δφ = (lat2 - lat1) * Math.PI / 180;
@@ -1297,7 +1723,7 @@
 
         function startRefreshInterval() {
             clearRefreshInterval();
-            refreshInterval = setInterval(loadDevices, 30000); // Refresh every 30 seconds
+            refreshInterval = setInterval(loadDevices, 30000);
         }
 
         function clearRefreshInterval() {
@@ -1307,13 +1733,12 @@
             }
         }
 
-        // === AUTO-LOGIN ===
+        // === INITIALIZATION ===
         document.addEventListener('DOMContentLoaded', function() {
             const savedToken = localStorage.getItem('agent_token');
             if (savedToken) {
                 token = savedToken;
                 
-                // Verify token by trying to load devices
                 fetch(`/api/devices/${token}`)
                     .then(res => {
                         if (res.ok) {
@@ -1328,22 +1753,30 @@
                         token = '';
                     });
             }
+
+            // Mobile menu close on map click
+            document.getElementById('map')?.addEventListener('click', () => {
+                if (window.innerWidth <= 768) {
+                    document.getElementById('sidebar').classList.remove('open');
+                }
+            });
         });
 
         // === KEYBOARD SHORTCUTS ===
         document.addEventListener('keydown', function(e) {
             if (e.target.type === 'text' || e.target.type === 'password') return;
             
-            switch(e.key) {
+            switch(e.key.toLowerCase()) {
                 case 'r':
-                case 'R':
                     refreshDevices();
                     break;
                 case 'c':
-                case 'C':
                     clearMap();
                     break;
-                case 'Escape':
+                case 'f':
+                    toggleFullscreen();
+                    break;
+                case 'escape':
                     if (!document.getElementById('renameModal').classList.contains('hidden')) {
                         closeRenameModal();
                     }
@@ -1354,16 +1787,22 @@
             }
         });
 
-        // Handle Enter key in login
+        // Handle Enter key events
         document.getElementById('password').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                login();
-            }
+            if (e.key === 'Enter') login();
         });
 
         document.getElementById('renameInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                confirmRename();
+            if (e.key === 'Enter') confirmRename();
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (map) {
+                map.invalidateSize();
+            }
+            if (analyticsChart) {
+                analyticsChart.resize();
             }
         });
     </script>
