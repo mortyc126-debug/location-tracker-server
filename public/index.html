@@ -119,6 +119,34 @@
             font-size: 14px;
         }
 
+<div id="cameraControls" class="camera-controls" style="padding: 15px; border-top: 1px solid #333;">
+    <h4 style="color: var(--primary-gold); margin-bottom: 10px;">LIVE CONTROL</h4>
+    
+    <div class="control-buttons" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+        <button class="btn" id="liveStreamBtn" onclick="toggleLiveStream()" disabled>
+            📹 LIVE CAM
+        </button>
+        <button class="btn" id="audioBtn" onclick="toggleAudio()" disabled>
+            🎤 AUDIO
+        </button>
+        <button class="btn" onclick="switchCamera()" disabled id="switchBtn">
+            🔄 SWITCH
+        </button>
+        <button class="btn" onclick="emergencyStop()" id="stopBtn" disabled>
+            ⏹ STOP ALL
+        </button>
+    </div>
+    
+    <div class="stream-status" style="margin-top: 10px; font-size: 12px; color: var(--text-secondary);">
+        Status: <span id="streamStatus">Offline</span>
+    </div>
+</div>
+
+<div class="live-video-container" style="margin-top: 15px;">
+    <video id="liveVideo" style="width: 100%; max-height: 200px; border-radius: 8px; display: none;" autoplay muted></video>
+    <canvas id="imageCanvas" style="width: 100%; max-height: 200px; border-radius: 8px; background: #111;"></canvas>
+</div>
+
         /* === MAIN LAYOUT === */
         .main-container {
             display: flex;
@@ -1808,3 +1836,4 @@
     </script>
 </body>
 </html>
+
