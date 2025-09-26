@@ -156,31 +156,29 @@ app.post("/api/location", async (req, res) => {
     }
     
     try {
-        const { error } = await supabase
-            .from('locations')
-            .insert([{
-                device_id,
-                device_name,
-                latitude: parseFloat(latitude),
-                longitude: parseFloat(longitude),
-                timestamp: new Date(timestamp).toISOString(),
-                accuracy: parseFloat(accuracy),
-                battery: parseInt(battery),
-                wifi_info: wifi_info || null
-            }]);
-            
-        if (error) {
-            console.error('Supabase error:', error);
-            return res.status(500).json({ error: 'Database error' });
-        }
+    const { error } = await supabase
+        .from('locations')
+        .insert([{
+            device_id,
+            device_name,
+            latitude: parseFloat(latitude),
+            longitude: parseFloat(longitude),
+            timestamp: typeof timestamp === 'string' ? new Date(timestamp).getTime() : timestamp, // <-- bigint
+            accuracy: parseFloat(accuracy),
+            battery: parseInt(battery),
+            wifi_info: wifi_info || null
+        }]);
         
-        res.json({ success: true });
-        
-    } catch (error) {
-        console.error('Location save error:', error);
-        res.status(500).json({ error: 'Server error' });
+    if (error) {
+        console.error('Supabase error:', error);
+        return res.status(500).json({ error: 'Database error' });
     }
-});
+    
+    res.json({ success: true });
+} catch (error) {
+    console.error('Location save error:', error);
+    res.status(500).json({ error: 'Server error' });
+}
 
 // Получение списка устройств
 app.get("/api/devices/:token", async (req, res) => {
@@ -459,4 +457,5 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
 
