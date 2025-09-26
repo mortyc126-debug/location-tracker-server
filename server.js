@@ -179,6 +179,7 @@ app.post("/api/location", async (req, res) => {
     console.error('Location save error:', error);
     res.status(500).json({ error: 'Server error' });
 }
+});
 
 // Получение списка устройств
 app.get("/api/devices/:token", async (req, res) => {
@@ -457,3 +458,4 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
