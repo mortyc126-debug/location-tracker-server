@@ -200,6 +200,72 @@ app.post('/api/camera/image', (req, res) => {
     res.json({ success: true });
 });
 
+// Удаление устройства
+app.delete("/api/device/:device_id/:token", async (req, res) => {
+    const { device_id, token } = req.params;
+    
+    if (token !== SECRET_TOKEN) {
+        return res.status(403).json({ error: "Forbidden" });
+    }
+
+    try {
+        const { error } = await supabase
+            .from("locations")
+            .delete()
+            .eq("device_id", device_id);
+
+        if (error) throw error;
+        
+        console.log(`Device ${device_id} deleted`);
+        res.json({ success: true });
+        
+    } catch (error) {
+        console.error('Delete device error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Переименование устройства
+app.post("/api/device/:device_id/rename/:token", async (req, res) => {
+    const { device_id, token } = req.params;
+    const { name } = req.body;
+    
+    if (token !== SECRET_TOKEN) {
+        return res.status(403).json({ error: "Forbidden" });
+    }
+
+    try {
+        const { error } = await supabase
+            .from("locations")
+            .update({ device_name: name })
+            .eq("device_id", device_id);
+
+        if (error) throw error;
+        
+        console.log(`Device ${device_id} renamed to ${name}`);
+        res.json({ success: true });
+        
+    } catch (error) {
+        console.error('Rename device error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Получение файлов устройства (заглушка)
+app.get("/api/device/:device_id/files/:token", (req, res) => {
+    const { device_id, token } = req.params;
+    
+    if (token !== SECRET_TOKEN) {
+        return res.status(403).json({ error: "Forbidden" });
+    }
+    
+    // Заглушка - возвращаем пустой список файлов
+    res.json({
+        device_id,
+        files: []
+    });
+});
+
 // Прием данных локации
 app.post("/api/location", async (req, res) => {
     const receivedToken = req.headers.authorization;
@@ -452,3 +518,4 @@ server.listen(PORT, () => {
     console.log('- GET /api/devices/:token');
     console.log('Server ready for connections!');
 });
+
