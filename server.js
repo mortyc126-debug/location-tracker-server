@@ -232,6 +232,29 @@ app.get("/api/devices/:token", async (req, res) => {
     }
 });
 
+// Добавьте этот эндпоинт для приема изображений через HTTP
+app.post('/api/camera/image', (req, res) => {
+    const authHeader = req.headers.authorization;
+    const receivedToken = authHeader && authHeader.split(' ')[1];
+    
+    if (receivedToken !== SECRET_TOKEN) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const { type, device_id, data, timestamp } = req.body;
+    
+    console.log(`Received ${type} from device ${device_id}`);
+    
+    // Пересылаем всем веб-клиентам
+    broadcastToWebClients(device_id, { 
+        type, 
+        data, 
+        timestamp: timestamp || Date.now() 
+    });
+    
+    res.json({ success: true });
+});
+
 // Получение данных конкретного устройства
 app.get("/api/device/:deviceId/:token", async (req, res) => {
     const { deviceId, token } = req.params;
@@ -458,5 +481,6 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
 
 
