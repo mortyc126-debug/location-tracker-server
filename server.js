@@ -294,6 +294,7 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
 });
 
 // Analytics
+// Замените метод analytics:
 app.get("/api/analytics/:device_id/:token", async (req, res) => {
     const { device_id, token } = req.params;
     
@@ -309,53 +310,17 @@ app.get("/api/analytics/:device_id/:token", async (req, res) => {
             .from("locations")
             .select("*")
             .eq("device_id", device_id)
-            .gte("timestamp", startDate.toISOString())
-            .order("timestamp", { ascending: true });
+            .gte("created_at", startDate.toISOString()) // Используем created_at вместо timestamp
+            .order("created_at", { ascending: true });
 
         if (error) throw error;
 
-        // Группировка по дням
-        const dailyStats = {};
-        let totalDistance = 0;
-
-        locations.forEach((loc, index) => {
-            const date = new Date(loc.timestamp).toDateString();
-
-            if (!dailyStats[date]) {
-                dailyStats[date] = {
-                    points: 0,
-                    distance: 0,
-                    avgBattery: 0
-                };
-            }
-
-            dailyStats[date].points++;
-            dailyStats[date].avgBattery += (loc.battery || 0);
-
-            if (index > 0) {
-                const prevLoc = locations[index - 1];
-                const distance = getDistance(
-                    prevLoc.latitude, prevLoc.longitude,
-                    loc.latitude, loc.longitude
-                ) / 1000; // км
-
-                dailyStats[date].distance += distance;
-                totalDistance += distance;
-            }
-        });
-
-        // Усредняем данные
-        Object.keys(dailyStats).forEach(date => {
-            const stats = dailyStats[date];
-            stats.avgBattery = Math.round(stats.avgBattery / stats.points);
-        });
-
+        // Простая статистика без сложных вычислений
         res.json({
             device_id,
             period_days: days,
-            total_distance: Math.round(totalDistance * 100) / 100,
-            daily_stats: dailyStats,
-            total_points: locations.length
+            total_points: locations.length,
+            locations: locations.slice(-100) // Последние 100 точек
         });
         
     } catch (error) {
@@ -481,6 +446,7 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
 
 
 
