@@ -213,7 +213,7 @@ app.post("/api/location", async (req, res) => {
                 device_name,
                 latitude: parseFloat(latitude),
                 longitude: parseFloat(longitude),
-                timestamp: timestampValue),
+                timestamp: timestampValue
                 accuracy: parseFloat(accuracy),
                 battery: parseInt(battery),
                 wifi_info: wifi_info || null
@@ -434,5 +434,6 @@ wss.on('error', (error) => {
 webWss.on('error', (error) => {
     console.error('Web Client WebSocket Server error:', error);
 });
+
 
 
