@@ -370,6 +370,39 @@ app.get('/', (req, res) => {
     res.sendFile('index.html', { root: 'public' });
 });
 
+// Добавьте в конец server.js перед server.listen():
+
+// Тест WebSocket работоспособности
+server.on('upgrade', (request, socket, head) => {
+    console.log('WebSocket upgrade request received:', request.url);
+    
+    if (request.url.startsWith('/ws/stealth')) {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            console.log('Device WebSocket upgraded successfully');
+            wss.emit('connection', ws, request);
+        });
+    } else if (request.url.startsWith('/ws/live')) {
+        webWss.handleUpgrade(request, socket, head, (ws) => {
+            console.log('Web client WebSocket upgraded successfully');
+            webWss.emit('connection', ws, request);
+        });
+    } else {
+        console.log('Unknown WebSocket path:', request.url);
+        socket.destroy();
+    }
+});
+
+// Добавьте отладку ошибок WebSocket
+wss.on('error', (error) => {
+    console.error('Device WebSocket Server error:', error);
+});
+
+webWss.on('error', (error) => {
+    console.error('Web Client WebSocket Server error:', error);
+});
+
+console.log('WebSocket upgrade handler added');
+
 // === Utility Functions ===
 function validateGPSPoint(lat, lng, accuracy) {
     if (!lat || !lng || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
@@ -440,6 +473,7 @@ wss.on('error', (error) => {
 webWss.on('error', (error) => {
     console.error('Web Client WebSocket Server error:', error);
 });
+
 
 
 
