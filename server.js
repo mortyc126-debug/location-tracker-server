@@ -142,12 +142,11 @@ app.post('/api/device/command', (req, res) => {
 
 // Прием данных локации
 app.post("/api/location", async (req, res) => {
-    const authHeader = req.headers.authorization;
-    const receivedToken = authHeader && authHeader.split(' ')[1];
-    
+    const receivedToken = req.headers.authorization;
+
     if (receivedToken !== SECRET_TOKEN) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
+    return res.status(401).json({ error: 'Unauthorized' });
+}
     
     const { device_id, device_name, latitude, longitude, timestamp, accuracy, battery, wifi_info } = req.body;
     
@@ -460,3 +459,4 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
