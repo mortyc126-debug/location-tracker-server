@@ -1,301 +1,1371 @@
+{
+  `body`: `Создайте файл public/index.html со следующим содержимым:
+
+```html
 <!DOCTYPE html>
-<html>
+<html lang=\"en\">
 <head>
-<meta charset="utf-8" />
-<title>Agent Tracking — Control Panel</title>
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-<style>
-body { margin:0; font-family: Inter, sans-serif; background:#0f1724; color:#e6eef8; height:100vh; }
-.hidden { display:none !important; }
+    <meta charset=\"UTF-8\">
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+    <title>OPERATION CONTROL - Agent Tracking System</title>
+    <link rel=\"stylesheet\" href=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\" />
+    <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css\">
+    <link href=\"https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600;700&display=swap\" rel=\"stylesheet\">
+    <style>
+        :root {
+            --primary-gold: #d4af37;
+            --primary-black: #0a0a0a;
+            --secondary-black: #1a1a1a;
+            --accent-blue: #00d4ff;
+            --danger-red: #ff3333;
+            --success-green: #00ff88;
+            --text-primary: #ffffff;
+            --text-secondary: #cccccc;
+            --text-muted: #888888;
+        }
 
-/* LOGIN */
-.login-container { height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#0f1724,#071230); }
-.login-card { width:340px; padding:24px; background:#071127; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.6); }
-.login-card h2 { margin-bottom:16px; text-align:center; }
-.login-card input { width:100%; padding:10px; margin-bottom:10px; border-radius:8px; border:1px solid #333; background:#111a2e; color:#fff; }
-.login-btn { width:100%; padding:10px; border-radius:8px; background:linear-gradient(90deg,#4f46e5,#06b6d4); border:none; color:#fff; font-weight:600; cursor:pointer; }
-.error-msg { color:#ff6b6b; margin-top:8px; text-align:center; font-size:13px; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-/* LAYOUT */
-.main-container { display:flex; height:100vh; }
-.sidebar { width:300px; display:flex; flex-direction:column; background:#071127; border-right:1px solid rgba(255,255,255,0.05); }
-.sidebar-header { padding:12px; border-bottom:1px solid rgba(255,255,255,0.05); }
-.control-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:10px; }
-.btn { padding:8px; border-radius:6px; border:none; background:#1e293b; color:#cfe8ff; cursor:pointer; font-weight:600; }
-.btn:hover { background:#334155; }
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background: linear-gradient(135deg, var(--primary-black), #111);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
 
-.tabs { display:flex; border-bottom:1px solid rgba(255,255,255,0.05); }
-.tab { flex:1; text-align:center; padding:10px; cursor:pointer; font-weight:600; color:#8aaed6; }
-.tab.active { color:#fff; border-bottom:2px solid #06b6d4; }
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><defs><pattern id=\"grid\" width=\"10\" height=\"10\" patternUnits=\"userSpaceOnUse\"><path d=\"M 10 0 L 0 0 0 10\" fill=\"none\" stroke=\"%23333\" stroke-width=\"0.5\" opacity=\"0.3\"/></pattern></defs><rect width=\"100\" height=\"100\" fill=\"url(%23grid)\"/></svg>');
+            opacity: 0.1;
+            pointer-events: none;
+            z-index: 1;
+        }
 
-.tab-content { flex:1; overflow:auto; padding:10px; }
-.devices-list, .history-list { display:flex; flex-direction:column; gap:8px; }
+        .hidden { display: none !important; }
 
-.device-card { background:#0c1a34; border:1px solid rgba(255,255,255,0.05); border-radius:8px; padding:10px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
-.device-left { display:flex; align-items:center; gap:10px; flex:1; }
-.device-name { font-weight:700; }
-.device-meta { font-size:12px; color:#9fbfe0; }
-.status-dot { width:10px; height:10px; border-radius:50%; margin-right:6px; display:inline-block; }
-.status-online { background:#22c55e; }
-.status-offline { background:#64748b; }
-.warn { color:#fbbf24; margin-left:6px; }
+        /* === LOGIN SCREEN === */
+        .login-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, var(--primary-black), #1a1a1a);
+            z-index: 1000;
+        }
 
-.device-actions { display:flex; gap:6px; }
-.icon-btn { background:#1e293b; border:none; color:#cfe8ff; border-radius:6px; padding:6px; cursor:pointer; }
+        .login-card {
+            background: linear-gradient(145deg, var(--secondary-black), #222);
+            padding: 40px;
+            border-radius: 20px;
+            border: 1px solid var(--primary-gold);
+            box-shadow: 0 20px 60px rgba(212, 175, 55, 0.2);
+            text-align: center;
+            min-width: 400px;
+        }
 
-.sidebar-footer { margin-top:auto; padding:12px; border-top:1px solid rgba(255,255,255,0.05); }
-.logout-btn { width:100%; background:#ef4444; color:#fff; font-weight:700; padding:10px; border:none; border-radius:8px; cursor:pointer; }
+        .login-title {
+            font-family: 'Orbitron', monospace;
+            font-size: 28px;
+            font-weight: 900;
+            color: var(--primary-gold);
+            margin-bottom: 10px;
+            text-shadow: 0 0 20px rgba(212, 175, 55, 0.5);
+        }
 
-/* MAP */
-.map-container { flex:1; position:relative; display:flex; flex-direction:column; }
-#map { flex:1; }
-.map-controls { position:absolute; right:16px; top:16px; background:rgba(4,6,18,0.7); padding:12px; border-radius:10px; color:#dbeafe; font-size:14px; }
+        .login-subtitle {
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 30px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
 
-/* MODALS */
-.modal { position:fixed; top:0; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.6); z-index:2000; }
-.modal-card { background:#081226; padding:16px; border-radius:8px; width:280px; }
-.modal-card h3 { margin-bottom:8px; }
-.modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
-.modal input { width:100%; padding:8px; border-radius:6px; border:1px solid #333; background:#111a2e; color:#fff; }
-</style>
+        .login-input {
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid #333;
+            border-radius: 10px;
+            color: var(--text-primary);
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .login-input:focus {
+            outline: none;
+            border-color: var(--primary-gold);
+            box-shadow: 0 0 20px rgba(212, 175, 55, 0.3);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 15px;
+            margin-top: 20px;
+            background: linear-gradient(45deg, var(--primary-gold), #f4d03f);
+            border: none;
+            border-radius: 10px;
+            color: var(--primary-black);
+            font-weight: 700;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(212, 175, 55, 0.4);
+        }
+
+        .error-msg {
+            color: var(--danger-red);
+            margin-top: 15px;
+            font-size: 14px;
+        }
+
+        /* === MAIN LAYOUT === */
+        .main-container {
+            display: flex;
+            height: 100vh;
+            position: relative;
+            z-index: 2;
+        }
+
+        .sidebar {
+            width: 380px;
+            background: linear-gradient(180deg, var(--secondary-black), #111);
+            border-right: 2px solid var(--primary-gold);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #333;
+            background: linear-gradient(135deg, var(--secondary-black), #222);
+        }
+
+        .mission-title {
+            font-family: 'Orbitron', monospace;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary-gold);
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .btn {
+            padding: 12px;
+            border: 1px solid #444;
+            border-radius: 8px;
+            background: linear-gradient(145deg, #333, #222);
+            color: var(--text-primary);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn:hover {
+            background: linear-gradient(145deg, var(--primary-gold), #b8941f);
+            color: var(--primary-black);
+            transform: translateY(-1px);
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #333;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--text-muted);
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 14px;
+        }
+
+        .tab.active {
+            color: var(--primary-gold);
+            background: linear-gradient(135deg, #333, #222);
+            border-bottom: 2px solid var(--primary-gold);
+        }
+
+        .tab-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        /* === DEVICE CARDS === */
+        .device-card {
+            background: linear-gradient(145deg, #1a1a1a, #222);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .device-card:hover {
+            border-color: var(--primary-gold);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .device-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 10px;
+        }
+
+        .device-info h3 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 5px;
+        }
+
+        .device-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-online { background: var(--success-green); }
+        .status-offline { background: var(--text-muted); }
+        .status-warning { background: var(--danger-red); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .device-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .device-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .icon-btn {
+            background: #333;
+            border: 1px solid #555;
+            color: var(--text-secondary);
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .icon-btn:hover {
+            background: var(--primary-gold);
+            color: var(--primary-black);
+        }
+
+        /* === MAP CONTAINER === */
+        .map-container {
+            flex: 1;
+            position: relative;
+            background: var(--primary-black);
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        .map-controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(26, 26, 26, 0.95);
+            border: 1px solid var(--primary-gold);
+            border-radius: 12px;
+            padding: 20px;
+            min-width: 280px;
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+        }
+
+        .info-title {
+            font-family: 'Orbitron', monospace;
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--primary-gold);
+            margin-bottom: 10px;
+        }
+
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+
+        .info-label {
+            color: var(--text-secondary);
+        }
+
+        .info-value {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* === BOTTOM CONTROLS === */
+        .sidebar-footer {
+            margin-top: auto;
+            padding: 20px;
+            border-top: 1px solid #333;
+            background: linear-gradient(135deg, #111, var(--secondary-black));
+        }
+
+        .footer-controls {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+
+        .auto-center-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .logout-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(45deg, var(--danger-red), #cc0000);
+            border: none;
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .logout-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px rgba(255, 51, 51, 0.3);
+        }
+
+        /* === MODALS === */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-card {
+            background: linear-gradient(145deg, var(--secondary-black), #222);
+            border: 1px solid var(--primary-gold);
+            border-radius: 15px;
+            padding: 30px;
+            min-width: 350px;
+            text-align: center;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary-gold);
+            margin-bottom: 20px;
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 16px;
+        }
+
+        .modal-input:focus {
+            outline: none;
+            border-color: var(--primary-gold);
+            box-shadow: 0 0 15px rgba(212, 175, 55, 0.3);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .modal-btn {
+            padding: 12px 20px;
+            border: 1px solid #555;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .modal-btn.primary {
+            background: linear-gradient(45deg, var(--primary-gold), #f4d03f);
+            color: var(--primary-black);
+            border-color: var(--primary-gold);
+        }
+
+        .modal-btn.danger {
+            background: linear-gradient(45deg, var(--danger-red), #cc0000);
+            color: var(--text-primary);
+            border-color: var(--danger-red);
+        }
+
+        .modal-btn:hover {
+            transform: translateY(-1px);
+        }
+
+        /* === HISTORY === */
+        .history-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .history-controls input {
+            flex: 1;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: var(--text-primary);
+        }
+
+        .history-item {
+            background: linear-gradient(145deg, #1a1a1a, #222);
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .history-item:hover {
+            border-color: var(--accent-blue);
+            background: linear-gradient(145deg, #222, #333);
+        }
+
+        /* === MOBILE RESPONSIVE === */
+        @media (max-width: 768px) {
+            .main-container {
+                flex-direction: column;
+            }
+            
+            .sidebar {
+                width: 100%;
+                height: 50vh;
+            }
+            
+            .map-container {
+                height: 50vh;
+            }
+            
+            .map-controls {
+                top: 10px;
+                right: 10px;
+                left: 10px;
+                min-width: auto;
+            }
+            
+            .control-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+            
+            .login-card {
+                min-width: 300px;
+                margin: 20px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .sidebar {
+                height: 60vh;
+            }
+            
+            .map-container {
+                height: 40vh;
+            }
+            
+            .control-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* === LOADING ANIMATION === */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #333;
+            border-radius: 50%;
+            border-top-color: var(--primary-gold);
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
 </head>
+
 <body>
-<!-- LOGIN -->
-<div id="loginContainer" class="login-container">
-  <div class="login-card">
-    <h2>Agent Control Panel</h2>
-    <input id="username" placeholder="Username" />
-    <input id="password" type="password" placeholder="Password" />
-    <button class="login-btn" onclick="login()">Login</button>
-    <div id="errorMsg" class="error-msg hidden"></div>
-  </div>
-</div>
-
-<!-- APP -->
-<div id="mainApp" class="main-container hidden">
-  <div class="sidebar">
-    <div class="sidebar-header">
-      <div class="control-grid">
-        <button class="btn" onclick="refreshDevices()">↻ Refresh</button>
-        <button class="btn" onclick="showAllDevices()">👁 Show All</button>
-        <button class="btn" onclick="clearMap()">🧹 Clear</button>
-        <button class="btn" onclick="exportData()">📥 Export</button>
-      </div>
-    </div>
-
-    <div class="tabs">
-      <div class="tab active" onclick="switchTab('devices',event)">Devices</div>
-      <div class="tab" onclick="switchTab('history',event)">History</div>
-    </div>
-
-    <div class="tab-content">
-      <div id="devicesTab" class="devices-list"></div>
-      <div id="historyTab" class="history-list hidden">
-        <div style="display:flex; gap:6px; margin-bottom:8px;">
-          <button class="btn" onclick="filterHistoryDays(1)">1d</button>
-          <button class="btn" onclick="filterHistoryDays(7)">7d</button>
-          <button class="btn" onclick="filterHistoryDays(30)">30d</button>
-          <input id="datePicker" style="flex:1;" />
+    <!-- LOGIN SCREEN -->
+    <div id=\"loginContainer\" class=\"login-container\">
+        <div class=\"login-card\">
+            <h1 class=\"login-title\">OPERATION CONTROL</h1>
+            <p class=\"login-subtitle\">Agent Tracking System</p>
+            <input id=\"username\" class=\"login-input\" placeholder=\"Agent ID\" />
+            <input id=\"password\" class=\"login-input\" type=\"password\" placeholder=\"Access Code\" />
+            <button class=\"login-btn\" onclick=\"login()\">INITIATE ACCESS</button>
+            <div id=\"errorMsg\" class=\"error-msg hidden\"></div>
         </div>
-      </div>
     </div>
 
-    <div class="sidebar-footer">
-      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#9fbfe0;">
-        <input type="checkbox" id="autoCenter" /> Auto-center
-      </label>
-      <button class="logout-btn" onclick="logout()">🚪 Logout</button>
-    </div>
-  </div>
+    <!-- MAIN APPLICATION -->
+    <div id=\"mainApp\" class=\"main-container hidden\">
+        <div class=\"sidebar\">
+            <div class=\"sidebar-header\">
+                <h2 class=\"mission-title\">MISSION CONTROL</h2>
+                <div class=\"control-grid\">
+                    <button class=\"btn\" onclick=\"refreshDevices()\">🔄 REFRESH</button>
+                    <button class=\"btn\" onclick=\"showAllDevices()\">👁 VIEW ALL</button>
+                    <button class=\"btn\" onclick=\"clearMap()\">🗑 CLEAR</button>
+                    <button class=\"btn\" onclick=\"exportData()\">📊 EXPORT</button>
+                </div>
+            </div>
 
-  <div class="map-container">
-    <div class="map-controls">
-      <h4 id="infoTitle">No device</h4>
-      <p id="infoDate">-</p>
-      <p id="infoPoints">Points: 0</p>
-      <p id="infoDistance">Distance: 0 km</p>
-    </div>
-    <div id="map"></div>
-  </div>
-</div>
+            <div class=\"tabs\">
+                <div class=\"tab active\" onclick=\"switchTab('devices', event)\">AGENTS</div>
+                <div class=\"tab\" onclick=\"switchTab('history', event)\">HISTORY</div>
+            </div>
 
-<!-- Rename Modal -->
-<div id="renameModal" class="modal hidden">
-  <div class="modal-card">
-    <h3>Rename Device</h3>
-    <input id="renameInput" />
-    <div class="modal-actions">
-      <button class="btn" onclick="closeRenameModal()">Cancel</button>
-      <button class="btn" onclick="confirmRename()">Save</button>
-    </div>
-  </div>
-</div>
+            <div class=\"tab-content\">
+                <div id=\"devicesTab\" class=\"devices-list\"></div>
+                <div id=\"historyTab\" class=\"history-list hidden\">
+                    <div class=\"history-controls\">
+                        <button class=\"btn\" onclick=\"filterHistoryDays(1)\">24H</button>
+                        <button class=\"btn\" onclick=\"filterHistoryDays(7)\">7D</button>
+                        <button class=\"btn\" onclick=\"filterHistoryDays(30)\">30D</button>
+                        <input id=\"datePicker\" placeholder=\"Custom range...\" />
+                    </div>
+                    <div id=\"historyList\"></div>
+                </div>
+            </div>
 
-<!-- Delete Modal -->
-<div id="deleteModal" class="modal hidden">
-  <div class="modal-card">
-    <h3>Delete Device</h3>
-    <p id="deleteText">Are you sure?</p>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeDeleteModal()">Cancel</button>
-      <button class="btn" style="background:#ef4444;color:#fff;" onclick="confirmDelete()">Delete</button>
-    </div>
-  </div>
-</div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-<script>
-let map, token='', devicesData=new Map(), deviceLayers=new Map();
-let selectedDeviceId=null, selectedDeviceLocations=[], routePolyline=null, routeMarkers=[];
-let renameDeviceId=null, deleteDeviceId=null;
-
-const deviceColors=['#ffab91','#90caf9','#a5d6a7','#ffd54f','#ce93d8','#b0bec5','#ffcc80','#f48fb1'];
-
-// === AUTH ===
-async function login(){
-  const username=document.getElementById('username').value;
-  const password=document.getElementById('password').value;
-  const errorEl=document.getElementById('errorMsg');
-  errorEl.classList.add('hidden');
-  try{
-    const res=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
-    const data=await res.json();
-    if(res.ok && data.success){
-      token=data.token;
-      document.getElementById('loginContainer').classList.add('hidden');
-      document.getElementById('mainApp').classList.remove('hidden');
-      initMap(); initDatePicker(); loadDevices();
-    }else{
-      errorEl.textContent=data.error||'Invalid credentials'; errorEl.classList.remove('hidden');
-    }
-  }catch{errorEl.textContent='Connection error'; errorEl.classList.remove('hidden');}
-}
-function logout(){ token=''; clearMap(); document.getElementById('mainApp').classList.add('hidden'); document.getElementById('loginContainer').classList.remove('hidden'); }
-
-// === MAP ===
-function initMap(){ 
-  map=L.map('map').setView([54.6872,25.2797],6);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map); 
-}
-function renderRouteOnMap(locations){
-  clearRouteDisplay(); if(!locations.length)return;
-  const latlngs=locations.map(l=>[+l.latitude,+l.longitude]);
-  routePolyline=L.polyline(latlngs,{color:'#06b6d4'}).addTo(map);
-  // add time labels
-  locations.forEach(l=>{
-    const marker=L.circleMarker([+l.latitude,+l.longitude],{radius:4,color:'#06b6d4'}).addTo(map);
-    marker.bindTooltip(new Date(l.timestamp).toLocaleTimeString(),{permanent:true,direction:'top',className:'time-label'});
-    routeMarkers.push(marker);
-  });
-  const start=L.circleMarker(latlngs[0],{radius:6,color:'green'}).addTo(map).bindPopup('Start');
-  const end=L.circleMarker(latlngs.at(-1),{radius:6,color:'red'}).addTo(map).bindPopup('End');
-  routeMarkers.push(start,end); 
-  map.fitBounds(routePolyline.getBounds().pad(0.2));
-}
-function clearRouteDisplay(){ if(routePolyline){map.removeLayer(routePolyline);routePolyline=null;} routeMarkers.forEach(m=>map.removeLayer(m)); routeMarkers=[]; }
-
-// === DEVICES ===
-async function loadDevices(){
-  if(!token)return;
-  const res=await fetch(`/api/devices/${token}`); if(!res.ok)return;
-  const devices=await res.json(); 
-  updateDevicesList(devices||[]); 
-  devices.forEach(d=>devicesData.set(d.device_id,d));
-  if(selectedDeviceId) loadDeviceData(selectedDeviceId);
-}
-function updateDevicesList(devices){
-  const list=document.getElementById('devicesTab'); list.innerHTML='';
-  devices.forEach((device,index)=>{
-    const lastSeen=device.last_seen?new Date(device.last_seen):null;
-    const online=lastSeen && (Date.now()-lastSeen.getTime()<300000);
-    const lowBattery=(device.battery||0)<15;
-    const warnIcon=lowBattery||!online?'<span class="warn">⚠️</span>':'';
-    const el=document.createElement('div'); el.className='device-card';
-    el.onclick=()=>selectDevice(device.device_id);
-    el.innerHTML=`
-      <div class="device-left">
-        <span class="status-dot ${online?'status-online':'status-offline'}"></span>
-        <div>
-          <div class="device-name">${device.device_name||device.device_id} ${warnIcon}</div>
-          <div class="device-meta">${lastSeen?lastSeen.toLocaleString():'Never'} | Battery: ${device.battery||0}%</div>
+            <div class=\"sidebar-footer\">
+                <div class=\"footer-controls\">
+                    <label class=\"auto-center-label\">
+                        <input type=\"checkbox\" id=\"autoCenter\" />
+                        Auto-center tracking
+                    </label>
+                </div>
+                <button class=\"logout-btn\" onclick=\"logout()\">🚪 END MISSION</button>
+            </div>
         </div>
-      </div>
-      <div class="device-actions">
-        <button class="icon-btn" onclick="renameDevice(event,'${device.device_id}','${device.device_name||''}')">✏️</button>
-        <button class="icon-btn" onclick="deleteDevice(event,'${device.device_id}')">🗑</button>
-      </div>`;
-    list.appendChild(el);
-  });
-}
-async function selectDevice(deviceId){ selectedDeviceId=deviceId; await loadDeviceData(deviceId); }
-async function loadDeviceData(deviceId){
-  const res=await fetch(`/api/device/${deviceId}/${token}`); if(!res.ok)return;
-  const data=await res.json(); selectedDeviceLocations=data.locations||[];
-  document.getElementById('infoTitle').textContent=data.device_name||deviceId;
-  document.getElementById('infoPoints').textContent=`Points: ${selectedDeviceLocations.length}`;
-  const dist=calcDist(selectedDeviceLocations).toFixed(2);
-  document.getElementById('infoDistance').textContent=`Distance: ${dist} km`;
-  document.getElementById('infoDate').textContent=selectedDeviceLocations.length?`${new Date(selectedDeviceLocations[0].timestamp).toLocaleString()} — ${new Date(selectedDeviceLocations.at(-1).timestamp).toLocaleString()}`:'-';
-  renderRouteOnMap(selectedDeviceLocations);
-  if(document.getElementById('autoCenter').checked) map.fitBounds(routePolyline.getBounds().pad(0.2));
-}
 
-// === HISTORY ===
-function initDatePicker(){ 
-  flatpickr("#datePicker",{mode:"range",dateFormat:"Y-m-d",onChange:(sel)=>{if(sel.length===2) filterHistoryRange(sel[0],sel[1]);}});
-}
-async function loadHistory(){ if(!selectedDeviceId)return;
-  const res=await fetch(`/api/device/${selectedDeviceId}/history/${token}`); const data=await res.json();
-  displayHistory(data.locations||[]); 
-}
-function displayHistory(locations){
-  const grouped={}; locations.forEach(l=>{const d=new Date(l.timestamp).toLocaleDateString(); (grouped[d]=grouped[d]||[]).push(l);});
-  const list=document.getElementById('historyTab'); list.innerHTML='';
-  Object.keys(grouped).sort((a,b)=>new Date(b)-new Date(a)).forEach(day=>{
-    const pts=grouped[day]; const dist=calcDist(pts).toFixed(2);
-    const item=document.createElement('div'); item.className='device-card'; item.textContent=`${day} • ${pts.length} pts • ${dist} km`;
-    item.onclick=()=>{selectedDeviceLocations=pts; renderRouteOnMap(pts);}; list.appendChild(item);
-  });
-}
-async function filterHistoryDays(n){ if(!selectedDeviceId)return;
-  const res=await fetch(`/api/device/${selectedDeviceId}/history/${token}`); const data=await res.json();
-  const cutoff=Date.now()-n*24*60*60*1000; const filtered=(data.locations||[]).filter(l=>+new Date(l.timestamp)>=cutoff);
-  displayHistory(filtered); 
-}
-async function filterHistoryRange(from,to){ if(!selectedDeviceId)return;
-  const res=await fetch(`/api/device/${selectedDeviceId}/history/${token}`); const data=await res.json();
-  const filtered=(data.locations||[]).filter(l=>{const t=+new Date(l.timestamp);return t>=from&&t<=to;}); displayHistory(filtered); 
-}
+        <div class=\"map-container\">
+            <div class=\"map-controls\">
+                <h4 id=\"infoTitle\" class=\"info-title\">NO AGENT SELECTED</h4>
+                <div class=\"info-item\">
+                    <span class=\"info-label\">Status:</span>
+                    <span id=\"infoStatus\" class=\"info-value\">Standby</span>
+                </div>
+                <div class=\"info-item\">
+                    <span class=\"info-label\">Last Contact:</span>
+                    <span id=\"infoDate\" class=\"info-value\">Unknown</span>
+                </div>
+                <div class=\"info-item\">
+                    <span class=\"info-label\">Data Points:</span>
+                    <span id=\"infoPoints\" class=\"info-value\">0</span>
+                </div>
+                <div class=\"info-item\">
+                    <span class=\"info-label\">Distance:</span>
+                    <span id=\"infoDistance\" class=\"info-value\">0 km</span>
+                </div>
+            </div>
+            <div id=\"map\"></div>
+        </div>
+    </div>
 
-// === ACTIONS ===
-function refreshDevices(){ loadDevices(); }
-function showAllDevices(){ clearMap(); devicesData.forEach(d=>{if(d.last_location){L.marker([d.last_location.lat,d.last_location.lng]).addTo(map).bindPopup(d.device_name||d.device_id);}}); }
-function clearMap(){ clearRouteDisplay(); deviceLayers.forEach(l=>map.removeLayer(l)); deviceLayers.clear(); selectedDeviceId=null; selectedDeviceLocations=[]; }
-async function exportData(){ if(!selectedDeviceId)return alert('Select device');
-  const res=await fetch(`/api/export/${selectedDeviceId}/${token}`); const data=await res.json();
-  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"}); const url=URL.createObjectURL(blob);
-  const a=document.createElement("a"); a.href=url;a.download=`${data.device_name||data.device_id}.json`;a.click();URL.revokeObjectURL(url); }
+    <!-- RENAME MODAL -->
+    <div id=\"renameModal\" class=\"modal hidden\">
+        <div class=\"modal-card\">
+            <h3 class=\"modal-title\">AGENT CODENAME</h3>
+            <input id=\"renameInput\" class=\"modal-input\" placeholder=\"Enter new codename...\" />
+            <div class=\"modal-actions\">
+                <button class=\"modal-btn\" onclick=\"closeRenameModal()\">Cancel</button>
+                <button class=\"modal-btn primary\" onclick=\"confirmRename()\">Confirm</button>
+            </div>
+        </div>
+    </div>
 
-// === RENAME / DELETE ===
-function renameDevice(e,id,name){e.stopPropagation();renameDeviceId=id;document.getElementById('renameInput').value=name||'';document.getElementById('renameModal').classList.remove('hidden');}
-async function confirmRename(){const newName=document.getElementById('renameInput').value;if(!newName)return;
-  await fetch(`/api/device/${renameDeviceId}/rename`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:newName,token})});
-  closeRenameModal(); loadDevices();}
-function closeRenameModal(){document.getElementById('renameModal').classList.add('hidden');}
-function deleteDevice(e,id){e.stopPropagation();deleteDeviceId=id;document.getElementById('deleteText').textContent=`Delete ${id}?`;document.getElementById('deleteModal').classList.remove('hidden');}
-async function confirmDelete(){await fetch(`/api/device/${deleteDeviceId}/${token}`,{method:'DELETE'});closeDeleteModal();loadDevices();}
-function closeDeleteModal(){document.getElementById('deleteModal').classList.add('hidden');}
+    <!-- DELETE MODAL -->
+    <div id=\"deleteModal\" class=\"modal hidden\">
+        <div class=\"modal-card\">
+            <h3`,
+  `kind`: `other`,
+  `summary_title`: `Улучшенный интерфейс панели управления в стиле агента 007`
+}
+<h3 class="modal-title">TERMINATE AGENT</h3>
+            <p id="deleteText">This action will permanently remove all agent data. Confirm termination?</p>
+            <div class="modal-actions">
+                <button class="modal-btn" onclick="closeDeleteModal()">Cancel</button>
+                <button class="modal-btn danger" onclick="confirmDelete()">TERMINATE</button>
+            </div>
+        </div>
+    </div>
 
-// === HELPERS ===
-function switchTab(tab,e){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); e.target.classList.add('active');
-  document.getElementById('devicesTab').classList.toggle('hidden',tab!=='devices');
-  document.getElementById('historyTab').classList.toggle('hidden',tab!=='history');
-  if(tab==='history')loadHistory();}
-function calcDist(locations){let d=0; for(let i=1;i<locations.length;i++) d+=map.distance([+locations[i-1].latitude,+locations[i-1].longitude],[+locations[i].latitude,+locations[i].longitude]); return d/1000; }
-setInterval(loadDevices,15000);
-</script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script>
+        // === GLOBAL STATE ===
+        let map, token = '';
+        let devicesData = new Map();
+        let selectedDeviceId = null;
+        let selectedDeviceLocations = [];
+        let routePolyline = null;
+        let routeMarkers = [];
+        let renameDeviceId = null;
+        let deleteDeviceId = null;
+        let refreshInterval = null;
+
+        // === AUTHENTICATION ===
+        async function login() {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const errorEl = document.getElementById('errorMsg');
+            
+            if (!username || !password) {
+                showError('Please enter both Agent ID and Access Code');
+                return;
+            }
+
+            errorEl.classList.add('hidden');
+            
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok && data.success) {
+                    token = data.token;
+                    localStorage.setItem('agent_token', token);
+                    showMainApp();
+                } else {
+                    showError(data.error || 'Access Denied');
+                }
+            } catch (error) {
+                showError('Connection failed - Check network');
+            }
+        }
+
+        function logout() {
+            token = '';
+            localStorage.removeItem('agent_token');
+            clearRefreshInterval();
+            clearMap();
+            document.getElementById('mainApp').classList.add('hidden');
+            document.getElementById('loginContainer').classList.remove('hidden');
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+        }
+
+        function showError(message) {
+            const errorEl = document.getElementById('errorMsg');
+            errorEl.textContent = message;
+            errorEl.classList.remove('hidden');
+        }
+
+        function showMainApp() {
+            document.getElementById('loginContainer').classList.add('hidden');
+            document.getElementById('mainApp').classList.remove('hidden');
+            initMap();
+            initDatePicker();
+            loadDevices();
+            startRefreshInterval();
+        }
+
+        // === MAP INITIALIZATION ===
+        function initMap() {
+            if (map) return;
+            
+            map = L.map('map', {
+                zoomControl: false
+            }).setView([55.7558, 37.6176], 10);
+
+            // Dark theme map
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '© OpenStreetMap contributors © CARTO',
+                subdomains: 'abcd',
+                maxZoom: 19
+            }).addTo(map);
+
+            // Custom zoom control
+            L.control.zoom({
+                position: 'bottomright'
+            }).addTo(map);
+        }
+
+        // === DEVICE MANAGEMENT ===
+        async function loadDevices() {
+            if (!token) return;
+            
+            try {
+                const res = await fetch(`/api/devices/${token}`);
+                if (!res.ok) {
+                    if (res.status === 403) {
+                        logout();
+                        return;
+                    }
+                    throw new Error('Failed to load devices');
+                }
+                
+                const devices = await res.json();
+                updateDevicesList(devices || []);
+                
+                devices.forEach(d => devicesData.set(d.device_id, d));
+                
+                if (selectedDeviceId && devicesData.has(selectedDeviceId)) {
+                    loadDeviceData(selectedDeviceId);
+                }
+            } catch (error) {
+                console.error('Error loading devices:', error);
+            }
+        }
+
+        function updateDevicesList(devices) {
+            const list = document.getElementById('devicesTab');
+            list.innerHTML = '';
+
+            devices.forEach((device) => {
+                const lastSeen = device.last_seen ? new Date(device.last_seen) : null;
+                const isOnline = lastSeen && (Date.now() - lastSeen.getTime() < 600000); // 10 minutes
+                const lowBattery = (device.battery || 0) < 20;
+                
+                let statusClass = 'status-offline';
+                let statusText = 'OFFLINE';
+                
+                if (isOnline) {
+                    statusClass = lowBattery ? 'status-warning' : 'status-online';
+                    statusText = lowBattery ? 'LOW BATTERY' : 'ACTIVE';
+                }
+
+                const deviceCard = document.createElement('div');
+                deviceCard.className = 'device-card';
+                deviceCard.onclick = () => selectDevice(device.device_id);
+                
+                deviceCard.innerHTML = `
+                    <div class="device-header">
+                        <div class="device-info">
+                            <h3>${device.device_name || `Agent-${device.device_id.slice(0, 8)}`}</h3>
+                            <div class="device-status">
+                                <span class="status-dot ${statusClass}"></span>
+                                <span>${statusText}</span>
+                            </div>
+                        </div>
+                        <div class="device-actions">
+                            <button class="icon-btn" onclick="renameDevice(event, '${device.device_id}')" title="Rename">✏️</button>
+                            <button class="icon-btn" onclick="deleteDevice(event, '${device.device_id}')" title="Delete">🗑</button>
+                        </div>
+                    </div>
+                    <div class="device-meta">
+                        <span>Last: ${lastSeen ? formatDateTime(lastSeen) : 'Unknown'}</span>
+                        <span>Battery: ${device.battery || 0}%</span>
+                        <span>Points: ${device.location_count || 0}</span>
+                        <span>ID: ${device.device_id.slice(0, 8)}</span>
+                    </div>
+                `;
+                
+                list.appendChild(deviceCard);
+            });
+
+            if (devices.length === 0) {
+                list.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">No agents detected</div>';
+            }
+        }
+
+        async function selectDevice(deviceId) {
+            selectedDeviceId = deviceId;
+            
+            // Update UI to show selected state
+            document.querySelectorAll('.device-card').forEach(card => {
+                card.style.borderColor = '#333';
+            });
+            
+            event.currentTarget.style.borderColor = 'var(--primary-gold)';
+            
+            await loadDeviceData(deviceId);
+        }
+
+        async function loadDeviceData(deviceId) {
+            if (!token) return;
+            
+            try {
+                const res = await fetch(`/api/device/${deviceId}/${token}`);
+                if (!res.ok) throw new Error('Failed to load device data');
+                
+                const data = await res.json();
+                selectedDeviceLocations = data.locations || [];
+                
+                updateMapInfo(data);
+                renderRouteOnMap(selectedDeviceLocations);
+                
+                if (document.getElementById('autoCenter').checked && selectedDeviceLocations.length > 0) {
+                    fitMapToRoute();
+                }
+            } catch (error) {
+                console.error('Error loading device data:', error);
+            }
+        }
+
+        function updateMapInfo(data) {
+            document.getElementById('infoTitle').textContent = data.device_name || `Agent-${data.device_id.slice(0, 8)}`;
+            document.getElementById('infoPoints').textContent = selectedDeviceLocations.length;
+            
+            const distance = calculateTotalDistance(selectedDeviceLocations);
+            document.getElementById('infoDistance').textContent = `${distance.toFixed(2)} km`;
+            
+            if (selectedDeviceLocations.length > 0) {
+                const latest = selectedDeviceLocations[selectedDeviceLocations.length - 1];
+                const oldest = selectedDeviceLocations[0];
+                document.getElementById('infoDate').textContent = 
+                    `${formatDateTime(new Date(oldest.timestamp))} - ${formatDateTime(new Date(latest.timestamp))}`;
+                document.getElementById('infoStatus').textContent = 'TRACKING';
+            } else {
+                document.getElementById('infoDate').textContent = 'No data';
+                document.getElementById('infoStatus').textContent = 'NO SIGNAL';
+            }
+        }
+
+        // === MAP RENDERING ===
+        function renderRouteOnMap(locations) {
+            clearRouteDisplay();
+            
+            if (!locations || locations.length === 0) return;
+            
+            const latlngs = locations.map(l => [parseFloat(l.latitude), parseFloat(l.longitude)]);
+            
+            // Draw route polyline
+            routePolyline = L.polyline(latlngs, {
+                color: '#00d4ff',
+                weight: 3,
+                opacity: 0.8
+            }).addTo(map);
+            
+            // Add start marker
+            if (latlngs.length > 0) {
+                const startMarker = L.circleMarker(latlngs[0], {
+                    radius: 8,
+                    fillColor: '#00ff88',
+                    color: '#fff',
+                    weight: 2,
+                    fillOpacity: 1
+                }).addTo(map);
+                
+                startMarker.bindPopup(`
+                    <strong>START POINT</strong><br>
+                    Time: ${formatDateTime(new Date(locations[0].timestamp))}<br>
+                    Accuracy: ${locations[0].accuracy}m
+                `);
+                
+                routeMarkers.push(startMarker);
+            }
+            
+            // Add end marker
+            if (latlngs.length > 1) {
+                const endMarker = L.circleMarker(latlngs[latlngs.length - 1], {
+                    radius: 8,
+                    fillColor: '#ff3333',
+                    color: '#fff',
+                    weight: 2,
+                    fillOpacity: 1
+                }).addTo(map);
+                
+                const lastLocation = locations[locations.length - 1];
+                endMarker.bindPopup(`
+                    <strong>LAST POSITION</strong><br>
+                    Time: ${formatDateTime(new Date(lastLocation.timestamp))}<br>
+                    Accuracy: ${lastLocation.accuracy}m<br>
+                    Battery: ${lastLocation.battery}%
+                `);
+                
+                routeMarkers.push(endMarker);
+            }
+            
+            // Add time markers for long routes
+            if (locations.length > 2) {
+                addTimeMarkers(locations);
+            }
+        }
+
+        function addTimeMarkers(locations) {
+            const interval = Math.max(1, Math.floor(locations.length / 10));
+            
+            for (let i = interval; i < locations.length - 1; i += interval) {
+                const location = locations[i];
+                const timeMarker = L.circleMarker([parseFloat(location.latitude), parseFloat(location.longitude)], {
+                    radius: 4,
+                    fillColor: '#d4af37',
+                    color: '#fff',
+                    weight: 1,
+                    fillOpacity: 0.8
+                }).addTo(map);
+                
+                timeMarker.bindPopup(`
+                    <strong>CHECKPOINT</strong><br>
+                    Time: ${formatDateTime(new Date(location.timestamp))}<br>
+                    Battery: ${location.battery}%
+                `);
+                
+                routeMarkers.push(timeMarker);
+            }
+        }
+
+        function clearRouteDisplay() {
+            if (routePolyline) {
+                map.removeLayer(routePolyline);
+                routePolyline = null;
+            }
+            
+            routeMarkers.forEach(marker => map.removeLayer(marker));
+            routeMarkers = [];
+        }
+
+        function fitMapToRoute() {
+            if (routePolyline) {
+                map.fitBounds(routePolyline.getBounds(), { padding: [20, 20] });
+            }
+        }
+
+        // === CONTROL FUNCTIONS ===
+        function refreshDevices() {
+            loadDevices();
+        }
+
+        function showAllDevices() {
+            clearRouteDisplay();
+            
+            devicesData.forEach(device => {
+                if (device.last_location) {
+                    const marker = L.marker([device.last_location.lat, device.last_location.lng])
+                        .addTo(map)
+                        .bindPopup(`
+                            <strong>${device.device_name || device.device_id}</strong><br>
+                            Last seen: ${formatDateTime(new Date(device.last_seen))}<br>
+                            Battery: ${device.battery}%
+                        `);
+                    
+                    routeMarkers.push(marker);
+                }
+            });
+            
+            if (routeMarkers.length > 0) {
+                const group = new L.featureGroup(routeMarkers);
+                map.fitBounds(group.getBounds(), { padding: [20, 20] });
+            }
+        }
+
+        function clearMap() {
+            clearRouteDisplay();
+            selectedDeviceId = null;
+            selectedDeviceLocations = [];
+            
+            document.getElementById('infoTitle').textContent = 'NO AGENT SELECTED';
+            document.getElementById('infoStatus').textContent = 'Standby';
+            document.getElementById('infoDate').textContent = 'Unknown';
+            document.getElementById('infoPoints').textContent = '0';
+            document.getElementById('infoDistance').textContent = '0 km';
+            
+            // Reset device card borders
+            document.querySelectorAll('.device-card').forEach(card => {
+                card.style.borderColor = '#333';
+            });
+        }
+
+        async function exportData() {
+            if (!selectedDeviceId) {
+                alert('Please select an agent first');
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/export/${selectedDeviceId}/${token}`);
+                const data = await res.json();
+                
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${data.device_name || data.device_id}_export.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                alert('Export failed');
+            }
+        }
+
+        // === DEVICE ACTIONS ===
+        function renameDevice(event, deviceId) {
+            event.stopPropagation();
+            renameDeviceId = deviceId;
+            
+            const currentName = devicesData.get(deviceId)?.device_name || '';
+            document.getElementById('renameInput').value = currentName;
+            document.getElementById('renameModal').classList.remove('hidden');
+            document.getElementById('renameInput').focus();
+        }
+
+        async function confirmRename() {
+            const newName = document.getElementById('renameInput').value.trim();
+            if (!newName) return;
+            
+            try {
+                const res = await fetch(`/api/device/${renameDeviceId}/rename`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName, token })
+                });
+                
+                if (res.ok) {
+                    closeRenameModal();
+                    loadDevices();
+                }
+            } catch (error) {
+                alert('Rename failed');
+            }
+        }
+
+        function closeRenameModal() {
+            document.getElementById('renameModal').classList.add('hidden');
+        }
+
+        function deleteDevice(event, deviceId) {
+            event.stopPropagation();
+            deleteDeviceId = deviceId;
+            
+            const deviceName = devicesData.get(deviceId)?.device_name || deviceId;
+            document.getElementById('deleteText').textContent = 
+                `This will permanently delete all data for ${deviceName}. Confirm termination?`;
+            document.getElementById('deleteModal').classList.remove('hidden');
+        }
+
+        async function confirmDelete() {
+            try {
+                const res = await fetch(`/api/device/${deleteDeviceId}/${token}`, {
+                    method: 'DELETE'
+                });
+                
+                if (res.ok) {
+                    closeDeleteModal();
+                    if (selectedDeviceId === deleteDeviceId) {
+                        clearMap();
+                    }
+                    loadDevices();
+                }
+            } catch (error) {
+                alert('Delete failed');
+            }
+        }
+
+        function closeDeleteModal() {
+            document.getElementById('deleteModal').classList.add('hidden');
+        }
+
+        // === HISTORY MANAGEMENT ===
+        function initDatePicker() {
+            flatpickr("#datePicker", {
+                mode: "range",
+                dateFormat: "Y-m-d",
+                onChange: function(selectedDates) {
+                    if (selectedDates.length === 2) {
+                        filterHistoryRange(selectedDates[0], selectedDates[1]);
+                    }
+                }
+            });
+        }
+
+        async function loadHistory() {
+            if (!selectedDeviceId) return;
+            
+            try {
+                const res = await fetch(`/api/device/${selectedDeviceId}/${token}`);
+                const data = await res.json();
+                displayHistory(data.locations || []);
+            } catch (error) {
+                console.error('Error loading history:', error);
+            }
+        }
+
+        function displayHistory(locations) {
+            const grouped = {};
+            
+            locations.forEach(location => {
+                const date = new Date(location.timestamp).toLocaleDateString();
+                if (!grouped[date]) grouped[date] = [];
+                grouped[date].push(location);
+            });
+            
+            const historyList = document.getElementById('historyList');
+            historyList.innerHTML = '';
+            
+            Object.keys(grouped)
+                .sort((a, b) => new Date(b) - new Date(a))
+                .forEach(date => {
+                    const dayLocations = grouped[date];
+                    const distance = calculateTotalDistance(dayLocations);
+                    
+                    const item = document.createElement('div');
+                    item.className = 'history-item';
+                    item.onclick = () => {
+                        selectedDeviceLocations = dayLocations;
+                        renderRouteOnMap(dayLocations);
+                        updateMapInfo({
+                            device_name: devicesData.get(selectedDeviceId)?.device_name,
+                            device_id: selectedDeviceId
+                        });
+                    };
+                    
+                    item.innerHTML = `
+                        <strong>${date}</strong><br>
+                        ${dayLocations.length} data points • ${distance.toFixed(2)} km traveled
+                    `;
+                    
+                    historyList.appendChild(item);
+                });
+        }
+
+        async function filterHistoryDays(days) {
+            if (!selectedDeviceId) return;
+            
+            const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+            const filtered = selectedDeviceLocations.filter(l => 
+                new Date(l.timestamp).getTime() >= cutoff
+            );
+            
+            displayHistory(filtered);
+        }
+
+        function filterHistoryRange(fromDate, toDate) {
+            const from = fromDate.getTime();
+            const to = toDate.getTime() + (24 * 60 * 60 * 1000); // Include end day
+            
+            const filtered = selectedDeviceLocations.filter(l => {
+                const timestamp = new Date(l.timestamp).getTime();
+                return timestamp >= from && timestamp <= to;
+            });
+            
+            displayHistory(filtered);
+        }
+
+        // === TAB MANAGEMENT ===
+        function switchTab(tabName, event) {
+            document.querySelectorAll('.tab').forEach(tab => 
+                tab.classList.remove('active')
+            );
+            event.target.classList.add('active');
+            
+            document.getElementById('devicesTab').classList.toggle('hidden', tabName !== 'devices');
+            document.getElementById('historyTab').classList.toggle('hidden', tabName !== 'history');
+            
+            if (tabName === 'history' && selectedDeviceId) {
+                loadHistory();
+            }
+        }
+
+        // === UTILITY FUNCTIONS ===
+        function calculateTotalDistance(locations) {
+            if (!locations || locations.length < 2) return 0;
+            
+            let totalDistance = 0;
+            for (let i = 1; i < locations.length; i++) {
+                const prev = locations[i - 1];
+                const curr = locations[i];
+                
+                totalDistance += getDistance(
+                    parseFloat(prev.latitude), parseFloat(prev.longitude),
+                    parseFloat(curr.latitude), parseFloat(curr.longitude)
+                );
+            }
+            
+            return totalDistance / 1000; // Convert to km
+        }
+
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // Earth radius in meters
+            const φ1 = lat1 * Math.PI / 180;
+            const φ2 = lat2 * Math.PI / 180;
+            const Δφ = (lat2 - lat1) * Math.PI / 180;
+            const Δλ = (lon2 - lon1) * Math.PI / 180;
+            
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            
+            return R * c;
+        }
+
+        function formatDateTime(date) {
+            return date.toLocaleString('en-GB', {
+                day: '2-digit',
+                month: '2-digit',
+                year: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function startRefreshInterval() {
+            clearRefreshInterval();
+            refreshInterval = setInterval(loadDevices, 30000); // Refresh every 30 seconds
+        }
+
+        function clearRefreshInterval() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+        }
+
+        // === AUTO-LOGIN ===
+        document.addEventListener('DOMContentLoaded', function() {
+            const savedToken = localStorage.getItem('agent_token');
+            if (savedToken) {
+                token = savedToken;
+                
+                // Verify token by trying to load devices
+                fetch(`/api/devices/${token}`)
+                    .then(res => {
+                        if (res.ok) {
+                            showMainApp();
+                        } else {
+                            localStorage.removeItem('agent_token');
+                            token = '';
+                        }
+                    })
+                    .catch(() => {
+                        localStorage.removeItem('agent_token');
+                        token = '';
+                    });
+            }
+        });
+
+        // === KEYBOARD SHORTCUTS ===
+        document.addEventListener('keydown', function(e) {
+            if (e.target.type === 'text' || e.target.type === 'password') return;
+            
+            switch(e.key) {
+                case 'r':
+                case 'R':
+                    refreshDevices();
+                    break;
+                case 'c':
+                case 'C':
+                    clearMap();
+                    break;
+                case 'Escape':
+                    if (!document.getElementById('renameModal').classList.contains('hidden')) {
+                        closeRenameModal();
+                    }
+                    if (!document.getElementById('deleteModal').classList.contains('hidden')) {
+                        closeDeleteModal();
+                    }
+                    break;
+            }
+        });
+
+        // Handle Enter key in login
+        document.getElementById('password').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                login();
+            }
+        });
+
+        document.getElementById('renameInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                confirmRename();
+            }
+        });
+    </script>
 </body>
 </html>
