@@ -147,6 +147,51 @@
     <canvas id="imageCanvas" style="width: 100%; max-height: 200px; border-radius: 8px; background: #111;"></canvas>
 </div>
 
+        <!-- Замените содержимое filesPanel в index.html -->
+<div id="filesPanel" class="tab-panel">
+    <div class="file-manager-container">
+        <!-- Заголовок и навигация -->
+        <div class="file-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 10px; background: linear-gradient(145deg, #1a1a1a, #222); border-radius: 8px;">
+            <div class="path-nav">
+                <button class="btn" onclick="navigateUp()" id="upBtn" disabled style="padding: 6px 10px; margin-right: 8px;">↑</button>
+                <span id="currentPath" style="font-size: 12px; color: var(--text-secondary);">/</span>
+            </div>
+            <div class="file-actions">
+                <button class="btn" onclick="refreshDirectory()" style="padding: 6px 10px; margin-left: 5px;">⟳</button>
+                <button class="btn" onclick="showSearchDialog()" style="padding: 6px 10px; margin-left: 5px;">🔍</button>
+            </div>
+        </div>
+
+        <!-- Строка поиска -->
+        <div id="searchBar" class="search-bar" style="margin-bottom: 15px; display: none;">
+            <input type="text" id="searchInput" placeholder="Search files..." style="width: calc(100% - 80px); padding: 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff;">
+            <button class="btn" onclick="performSearch()" style="padding: 8px 12px; margin-left: 8px;">GO</button>
+        </div>
+
+        <!-- Список файлов -->
+        <div class="file-list-container" style="max-height: 400px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 8px;">
+            <div id="fileList" style="padding: 10px;">
+                <div style="text-align: center; color: #666; padding: 40px;">
+                    Click device and select FILES tab to browse
+                </div>
+            </div>
+        </div>
+
+        <!-- Панель предварительного просмотра -->
+        <div id="previewPanel" class="preview-panel" style="margin-top: 15px; background: linear-gradient(145deg, #1a1a1a, #222); border-radius: 8px; padding: 15px; display: none;">
+            <div class="preview-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h5 id="previewTitle" style="color: var(--primary-gold); margin: 0;">File Preview</h5>
+                <button class="icon-btn" onclick="closePreview()">✕</button>
+            </div>
+            <div id="previewContent" style="max-height: 200px; overflow-y: auto;"></div>
+            <div class="preview-actions" style="margin-top: 10px; display: flex; gap: 8px;">
+                <button class="btn" onclick="downloadFile()" id="downloadBtn" style="padding: 6px 12px;">📥 Download</button>
+                <button class="btn" onclick="deleteCurrentFile()" id="deleteBtn" style="background: var(--danger-red); padding: 6px 12px;">🗑 Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
         /* === MAIN LAYOUT === */
         .main-container {
             display: flex;
@@ -1867,5 +1912,6 @@
     </script>
 </body>
 </html>
+
 
 
