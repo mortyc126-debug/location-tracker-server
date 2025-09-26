@@ -7,8 +7,17 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // === Supabase подключение ===
-const supabaseUrl = "https://hapwopjrgwdjwfawpjwq.supabase.co";
-const supabaseKey = process.env.SUPABASE_KEY;
+const supabaseUrl = process.env.SUPABASE_URL || "https://hapwopjrgwdjwfawpjwq.supabase.co";
+const supabaseKey = process.env.SUPABASE_ANON_KEY; // Изменено с SUPABASE_KEY на SUPABASE_ANON_KEY
+
+// Проверка наличия ключей
+if (!supabaseUrl || !supabaseKey) {
+    console.error('Missing Supabase credentials');
+    console.error('URL:', supabaseUrl);
+    console.error('KEY exists:', !!supabaseKey);
+    process.exit(1);
+}
+
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // === Конфиг авторизации ===
@@ -367,4 +376,5 @@ app.get("/api/export/:device_id/:token", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
