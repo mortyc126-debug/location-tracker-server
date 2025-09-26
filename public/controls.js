@@ -108,23 +108,44 @@ async function sendDeviceCommand(command) {
     }
 }
 
+// В JavaScript части замените функцию initLiveStreamConnection:
 function initLiveStreamConnection() {
-    const wsUrl = `wss://location-tracker-server-micv.onrender.com/ws/live/${selectedDeviceId}`;
+    const wsUrl = `wss://location-tracker-server-micv.onrender.com/ws/live`;
     liveStreamWebSocket = new WebSocket(wsUrl);
+    
+    liveStreamWebSocket.onopen = () => {
+        console.log('Live stream WebSocket connected');
+    };
     
     liveStreamWebSocket.onmessage = (event) => {
         const data = JSON.parse(event.data);
         
-        if (data.type === 'image') {
-            displayLiveImage(data.data);
-        } else if (data.type === 'audio') {
-            playAudioData(data.data);
+        // Фильтруем сообщения только от выбранного устройства
+        if (data.deviceId === selectedDeviceId) {
+            if (data.type === 'image') {
+                displayLiveImage(data.data);
+            } else if (data.type === 'audio') {
+                playAudioData(data.data);
+            } else {
+                handleFileSystemMessage(data);
+            }
         }
     };
     
     liveStreamWebSocket.onclose = () => {
         console.log('Live stream connection closed');
+        // Переподключение через 5 секунд
+        setTimeout(() => {
+            if (selectedDeviceId) {
+                initLiveStreamConnection();
+            }
+        }, 5000);
     };
+    
+    liveStreamWebSocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+    };
+}
 }
 
 function displayLiveImage(base64Image) {
