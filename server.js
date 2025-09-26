@@ -123,7 +123,7 @@ app.post("/api/login", (req, res) => {
 // === POST location с валидацией ===
 app.post("/api/location", async (req, res) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${SECRET_TOKEN}`) {
+  if (!authHeader || authHeader !== `${SECRET_TOKEN}`) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -392,6 +392,7 @@ app.get("/api/export/:device_id/:token", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
 
