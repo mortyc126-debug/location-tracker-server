@@ -375,13 +375,16 @@ app.get('/', (req, res) => {
 // Тест WebSocket работоспособности
 server.on('upgrade', (request, socket, head) => {
     console.log('WebSocket upgrade request received:', request.url);
+    console.log('Headers:', request.headers);
     
     if (request.url.startsWith('/ws/stealth')) {
+        console.log('Handling device WebSocket upgrade...');
         wss.handleUpgrade(request, socket, head, (ws) => {
             console.log('Device WebSocket upgraded successfully');
             wss.emit('connection', ws, request);
         });
     } else if (request.url.startsWith('/ws/live')) {
+        console.log('Handling web client WebSocket upgrade...');
         webWss.handleUpgrade(request, socket, head, (ws) => {
             console.log('Web client WebSocket upgraded successfully');
             webWss.emit('connection', ws, request);
@@ -390,6 +393,35 @@ server.on('upgrade', (request, socket, head) => {
         console.log('Unknown WebSocket path:', request.url);
         socket.destroy();
     }
+});
+
+// Обработчик connection должен быть СНАРУЖИ обработчика upgrade
+wss.on('connection', (ws, req) => {
+    console.log('NEW DEVICE WebSocket connection established:', req.url);
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const deviceId = url.pathname.split('/').pop();
+    
+    console.log(`Device connected successfully: ${deviceId}`);
+    activeConnections.set(deviceId, ws);
+    
+    ws.on('message', (data) => {
+        try {
+            const message = JSON.parse(data.toString());
+            console.log(`Message from ${deviceId}:`, message.type);
+            broadcastToWebClients(deviceId, message);
+        } catch (error) {
+            console.error('WebSocket message error:', error);
+        }
+    });
+    
+    ws.on('close', () => {
+        activeConnections.delete(deviceId);
+        console.log(`Device ${deviceId} disconnected`);
+    });
+    
+    ws.on('error', (error) => {
+        console.error('Device WebSocket error:', error);
+    });
 });
 
 // Добавьте отладку ошибок WebSocket
@@ -473,6 +505,7 @@ wss.on('error', (error) => {
 webWss.on('error', (error) => {
     console.error('Web Client WebSocket Server error:', error);
 });
+
 
 
 
