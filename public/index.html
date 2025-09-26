@@ -493,6 +493,37 @@
             cursor: pointer;
         }
 
+        <!-- Добавьте новую вкладку в sidebar -->
+<div class="nav-tab" onclick="switchTab('files', event)">FILES</div>
+
+<!-- Панель управления файлами -->
+<div id="filesPanel" class="tab-panel">
+    <div class="file-management-container">
+        <h4 style="color: var(--primary-gold); margin-bottom: 15px;">FILE MANAGEMENT</h4>
+        
+        <!-- Поиск файлов -->
+        <div class="search-section" style="margin-bottom: 20px;">
+            <h5>Search Files</h5>
+            <input type="text" id="fileKeywords" placeholder="Keywords (comma separated)" style="width: 100%; margin: 5px 0; padding: 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff;">
+            <input type="text" id="fileExtensions" placeholder="Extensions: .pdf,.doc,.txt" style="width: 100%; margin: 5px 0; padding: 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff;">
+            <button class="btn" onclick="searchFiles()" style="width: 100%; margin-top: 10px;">🔍 SEARCH FILES</button>
+        </div>
+        
+        <!-- Результаты поиска -->
+        <div id="searchResults" style="max-height: 200px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 10px; margin-bottom: 15px; display: none;">
+            <div id="fileList"></div>
+        </div>
+        
+        <!-- Быстрые действия -->
+        <div class="quick-actions" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <button class="btn" onclick="clearBrowserHistory()">🗑 CLEAR HISTORY</button>
+            <button class="btn" onclick="clearAppCaches()">🧹 CLEAR CACHE</button>
+            <button class="btn" onclick="deleteSelectedFiles()" id="deleteBtn" disabled>❌ DELETE SELECTED</button>
+            <button class="btn" onclick="secureWipeFiles()" id="wipeBtn" disabled>🔥 SECURE WIPE</button>
+        </div>
+    </div>
+</div>
+
         /* === SIDEBAR FOOTER === */
         .sidebar-footer {
             margin-top: auto;
@@ -1836,4 +1867,5 @@
     </script>
 </body>
 </html>
+
 
