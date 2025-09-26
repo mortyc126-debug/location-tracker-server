@@ -189,10 +189,9 @@ app.post('/api/camera/image', (req, res) => {
     res.json({ success: true });
 });
 
-// Прием данных локации
 app.post("/api/location", async (req, res) => {
-    const receivedToken = req.headers.authorization; // Убираем split
-    
+    const receivedToken = req.headers.authorization;
+
     if (receivedToken !== SECRET_TOKEN) {
         console.log('Unauthorized location request:', receivedToken);
         return res.status(401).json({ error: 'Unauthorized' });
@@ -200,9 +199,16 @@ app.post("/api/location", async (req, res) => {
     
     const { device_id, device_name, latitude, longitude, timestamp, accuracy, battery, wifi_info } = req.body;
     
-    // Валидация GPS данных
     if (!validateGPSPoint(latitude, longitude, accuracy)) {
         return res.status(400).json({ error: "Invalid GPS coordinates" });
+    }
+    
+    // Преобразуем timestamp в число (bigint) - ПЕРЕМЕЩЕНО ВЫШЕ try блока
+    let timestampValue;
+    if (typeof timestamp === 'string') {
+        timestampValue = new Date(timestamp).getTime();
+    } else {
+        timestampValue = timestamp;
     }
     
     try {
@@ -434,6 +440,7 @@ wss.on('error', (error) => {
 webWss.on('error', (error) => {
     console.error('Web Client WebSocket Server error:', error);
 });
+
 
 
 
