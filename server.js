@@ -20,11 +20,6 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// === Конфиг авторизации ===
-const ADMIN_USER = process.env.ADMIN_USER || "admin";
-const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
-const SECRET_TOKEN = process.env.SECRET_TOKEN || "your_secret_key_123";
-
 // === Middlewares ===
 app.use(cors());
 app.use(bodyParser.json());
@@ -397,6 +392,7 @@ app.get("/api/export/:device_id/:token", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
 
