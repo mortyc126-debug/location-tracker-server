@@ -168,11 +168,10 @@ app.post('/api/device/command', (req, res) => {
 
 // Прием изображений через HTTP (fallback)
 app.post('/api/camera/image', (req, res) => {
-    const authHeader = req.headers.authorization;
-    const receivedToken = authHeader && authHeader.split(' ')[1];
+    const receivedToken = req.headers.authorization; // Убираем split
     
     if (receivedToken !== SECRET_TOKEN) {
-        console.log('Unauthorized image request:', authHeader);
+        console.log('Unauthorized image request:', receivedToken);
         return res.status(401).json({ error: 'Unauthorized' });
     }
     
@@ -192,11 +191,10 @@ app.post('/api/camera/image', (req, res) => {
 
 // Прием данных локации
 app.post("/api/location", async (req, res) => {
-    const authHeader = req.headers.authorization;
-    const receivedToken = authHeader && authHeader.split(' ')[1];
+    const receivedToken = req.headers.authorization; // Убираем split
     
     if (receivedToken !== SECRET_TOKEN) {
-        console.log('Unauthorized location request:', authHeader);
+        console.log('Unauthorized location request:', receivedToken);
         return res.status(401).json({ error: 'Unauthorized' });
     }
     
@@ -436,3 +434,4 @@ wss.on('error', (error) => {
 webWss.on('error', (error) => {
     console.error('Web Client WebSocket Server error:', error);
 });
+
