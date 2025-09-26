@@ -37,6 +37,27 @@ app.post("/api/device/command", async (req, res) => {
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: "Forbidden" });
   }
+
+    // Добавьте этот эндпоинт в server.js
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+    
+    console.log('Login attempt:', username, password); // Для отладки
+    console.log('Expected:', ADMIN_USER, ADMIN_PASS); // Для отладки
+    
+    if (username === ADMIN_USER && password === ADMIN_PASS) {
+        // Можно отправить JWT токен или просто success
+        res.json({ 
+            success: true, 
+            token: SECRET_TOKEN 
+        });
+    } else {
+        res.status(401).json({ 
+            success: false, 
+            error: 'Invalid credentials' 
+        });
+    }
+});
   
   // Здесь можно добавить логику отправки команд через WebSocket или push-уведомления
   // В данном случае команды будут получены через существующее WebSocket соединение
@@ -376,5 +397,6 @@ app.get("/api/export/:device_id/:token", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
