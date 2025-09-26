@@ -1260,6 +1260,64 @@
             }
         }
 
+        function connectToDevice(deviceId) {
+    selectedDeviceId = deviceId;
+    
+    // Подключаемся к веб-клиентскому WebSocket
+    if (liveStreamWebSocket) {
+        liveStreamWebSocket.close();
+    }
+    
+    // Правильный URL для веб-клиентов
+    const wsUrl = `wss://location-tracker-server-micv.onrender.com/ws/live`;
+    
+    liveStreamWebSocket = new WebSocket(wsUrl);
+    
+    liveStreamWebSocket.onopen = () => {
+        console.log('Connected to live stream');
+        document.getElementById('connectionStatus').textContent = 'Подключено к устройству: ' + deviceId;
+        showLiveStream();
+    };
+    
+    liveStreamWebSocket.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            console.log('Received data:', data.type, 'from device:', data.deviceId);
+            
+            // Показываем данные только от выбранного устройства
+            if (data.deviceId === selectedDeviceId) {
+                if (data.type === 'image') {
+                    displayLiveImage(data.data);
+                } else if (data.type === 'audio') {
+                    // Обработка аудио данных
+                } else if (data.type === 'file_list') {
+                    displayFileList(data.files);
+                }
+            }
+        } catch (error) {
+            console.error('Error processing live stream data:', error);
+        }
+    };
+    
+    liveStreamWebSocket.onerror = (error) => {
+        console.error('Live stream WebSocket error:', error);
+        document.getElementById('connectionStatus').textContent = 'Ошибка подключения';
+    };
+    
+    liveStreamWebSocket.onclose = () => {
+        console.log('Live stream disconnected');
+        document.getElementById('connectionStatus').textContent = 'Отключено';
+    };
+}
+
+function displayLiveImage(base64Data) {
+    const liveVideo = document.getElementById('liveVideo');
+    if (liveVideo) {
+        liveVideo.src = 'data:image/jpeg;base64,' + base64Data;
+        console.log('Image updated');
+    }
+}
+        
         // === FILE SYSTEM FUNCTIONS ===
         function connectToFileSystem() {
             if (!selectedDeviceId) {
@@ -2295,3 +2353,4 @@
     </script>
 </body>
 </html>
+
