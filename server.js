@@ -146,15 +146,9 @@ wss.on("connection", (ws, req) => {
       }
     });
 
-    ws.on("close", () => {
-      webClients.delete(ws);
-      console.log(`Web client disconnected. Total web clients: ${webClients.size}`);
-    });
-
     ws.on("error", (err) => {
       console.error("Web client WebSocket error:", err);
     });
-  }
 });
 
 // WS server-level errors
@@ -470,5 +464,6 @@ server.listen(PORT, () => {
   console.log("- Legacy devices path: ws://host/ws/stealth/SYS123");
   console.log("Available endpoints: /api/login, /api/location, /api/camera/image, /api/devices/:token, etc.");
 });
+
 
 
