@@ -1080,6 +1080,20 @@
             errorEl.classList.remove('hidden');
         }
 
+        function handleDeviceMessage(message) {
+    console.log('Received:', message.type, 'from', message.deviceId);
+    
+    if (message.type === 'image') {
+        const img = document.getElementById('cameraPreview');
+        if (img) {
+            img.src = 'data:image/jpeg;base64,' + message.data;
+            img.style.display = 'block';
+            console.log('Image updated');
+        } else {
+            console.error('cameraPreview element not found');
+        }
+    }
+
         function showMainApp() {
             document.getElementById('loginContainer').classList.add('hidden');
             document.getElementById('mainApp').classList.remove('hidden');
@@ -2353,4 +2367,5 @@ function displayLiveImage(base64Data) {
     </script>
 </body>
 </html>
+
 
