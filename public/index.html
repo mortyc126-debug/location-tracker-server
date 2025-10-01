@@ -885,6 +885,14 @@
                     </div>
                 </div>
 
+                    <div id="cameraContainer" style="display: none;">
+                        <h3>Камера устройства</h3>
+                        <img id="cameraPreview" style="max-width: 100%; border: 1px solid #ddd;" />
+                        <button onclick="stopCamera()">Остановить</button>
+                    </div>
+                </div>
+
+
                 <!-- FILES TAB -->
                 <div id="filesPanel" class="tab-panel">
                     <div class="file-manager-container">
@@ -2367,5 +2375,6 @@ function displayLiveImage(base64Data) {
     </script>
 </body>
 </html>
+
 
 
