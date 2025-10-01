@@ -498,3 +498,4 @@ server.listen(PORT, () => {
   console.log("- Legacy devices path: ws://host/ws/stealth/SYS123");
   console.log("Available endpoints: /api/login, /api/location, /api/camera/image, /api/devices/:token, etc.");
 });
+
