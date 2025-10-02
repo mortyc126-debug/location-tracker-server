@@ -1129,33 +1129,59 @@ function connectToDevice(deviceId) {
     };
 }
 
-// ДОБАВЬТЕ ФУНКЦИЮ ДЛЯ ВОСПРОИЗВЕДЕНИЯ АУДИО:
+// === АУДИО ПЛЕЕР ===
+const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+let audioQueue = [];
+let isPlaying = false;
+
 function playAudioData(base64Data) {
     try {
-        // Декодируем Base64 в ArrayBuffer
+        // Декодируем Base64 → Uint8Array
         const binaryString = atob(base64Data);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
         }
-        
-        // Конвертируем PCM в AudioBuffer
-        const audioBuffer = audioContext.createBuffer(1, bytes.length / 2, 16000);
-        const channelData = audioBuffer.getChannelData(0);
-        
-        for (let i = 0; i < bytes.length / 2; i++) {
+
+        // Конвертируем в Float32 для AudioContext
+        const samples = new Float32Array(bytes.length / 2);
+        for (let i = 0; i < samples.length; i++) {
             const sample = (bytes[i * 2] | (bytes[i * 2 + 1] << 8));
-            channelData[i] = sample / 32768.0;
+            samples[i] = sample / 32768.0; // нормализация
         }
-        
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
-        source.start();
-        
-    } catch (error) {
-        console.error('Error playing audio:', error);
+
+        // Добавляем в очередь
+        audioQueue.push(samples);
+        if (!isPlaying) {
+            processAudioQueue();
+        }
+
+    } catch (err) {
+        console.error("Audio decode error:", err);
     }
+}
+
+function processAudioQueue() {
+    if (audioQueue.length === 0) {
+        isPlaying = false;
+        return;
+    }
+    isPlaying = true;
+
+    const samples = audioQueue.shift();
+
+    // Создаём буфер для воспроизведения
+    const buffer = audioContext.createBuffer(1, samples.length, 16000);
+    buffer.getChannelData(0).set(samples);
+
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+
+    // Когда закончил играть → берём следующий
+    source.onended = () => processAudioQueue();
+
+    source.start();
 }
 
 function updateCameraFeed(base64Image) {
@@ -1164,18 +1190,19 @@ function updateCameraFeed(base64Image) {
 }
 
         function handleDeviceMessage(message) {
-            switch(message.type) {
-                case 'image':
-                    displayLiveImage(message.data);
-                    break;
-                case 'audio':
-                    console.log('Audio data received');
-                    break;
-                case 'file_list':
-                    displayFileList(message.files);
-                    break;
-            }
-        }
+    switch(message.type) {
+        case 'image':
+            displayLiveImage(message.data);
+            break;
+        case 'audio':
+            console.log('Audio data received');
+            playAudioData(message.data); // <-- вот здесь добавляем воспроизведение
+            break;
+        case 'file_list':
+            displayFileList(message.files);
+            break;
+    }
+}
 
         function displayLiveImage(base64Data) {
             const canvas = document.getElementById('imageCanvas');
@@ -2219,4 +2246,5 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
