@@ -7,7 +7,13 @@ import http from "http";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const SECRET_TOKEN = "your_secret_key_123";
 
+// ДОБАВЬТЕ ЭТУ СТРОКУ ЗДЕСЬ:
+const deviceCommands = new Map();
+
+const locations = new Map();
+const stealthConnections = new Map();
 console.log("Starting location tracker server...");
 
 const server = http.createServer(app);
@@ -433,6 +439,7 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
 
