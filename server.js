@@ -372,7 +372,7 @@ function validateGPSPoint(lat, lng, accuracy) {
   return true;
 }
 
-function filterDuplicatePoints(locations, minDistance = 10) {
+function filterDuplicatePoints(locations, minDistance = 20) { // Увеличили с 10 до 20
   if (!locations || locations.length < 2) return locations;
   const filtered = [locations[0]];
 
@@ -385,7 +385,12 @@ function filterDuplicatePoints(locations, minDistance = 10) {
       parseFloat(curr.latitude), parseFloat(curr.longitude)
     );
 
-    if (distance > minDistance) filtered.push(curr);
+    // Учитываем точность
+    const effectiveDistance = distance - (prev.accuracy || 0) - (curr.accuracy || 0);
+
+    if (effectiveDistance > minDistance) {
+      filtered.push(curr);
+    }
   }
 
   return filtered;
@@ -407,4 +412,5 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
