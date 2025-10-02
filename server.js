@@ -175,31 +175,32 @@ app.post("/api/device/command", (req, res) => {
   console.log(`=== COMMAND REQUEST ===`);
   console.log(`Device ID: ${device_id}`);
   console.log(`Command: ${command}`);
-  console.log(`Current connections:`, Array.from(stealthConnections.keys()));
+  console.log(`Active connections:`, Array.from(stealthConnections.keys()));
   
-  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
+  if (token !== SECRET_TOKEN) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const entry = stealthConnections.get(device_id);
   
-  console.log(`Entry found: ${!!entry}`);
-  if (entry) {
-    console.log(`WebSocket exists: ${!!entry.ws}`);
-    console.log(`WebSocket state: ${entry.ws ? entry.ws.readyState : 'N/A'}`);
-  }
-  
   if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
     try {
-      const commandPayload = JSON.stringify({ action: command, timestamp: Date.now() });
+      // ИЗМЕНЕНО: отправляем в правильном формате
+      const commandPayload = JSON.stringify({ 
+        action: command.toLowerCase(), // команды в lowercase
+        timestamp: Date.now() 
+      });
+      
       console.log(`Sending to device:`, commandPayload);
       entry.ws.send(commandPayload);
-      console.log(`Command sent to device ${device_id}: ${command}`);
+      
       return res.json({ success: true, command_sent: command });
     } catch (err) {
-      console.error("Error sending command to device:", err);
+      console.error("Error sending command:", err);
       return res.status(500).json({ error: "Failed to send command" });
     }
   } else {
-    console.log(`Device ${device_id} not connected`);
+    console.log(`Device ${device_id} not connected or WebSocket not ready`);
     return res.status(404).json({ error: "Device not connected" });
   }
 });
@@ -406,3 +407,4 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
