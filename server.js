@@ -105,6 +105,11 @@ wss.on("connection", (ws, req) => {
           console.log(`Received ${msg.files.length} files from ${deviceId}`);
         }
         
+        // ДОБАВЬТЕ ЭТИ СТРОКИ:
+        if (msg.type === 'image' || msg.type === 'audio') {
+          console.log(`Broadcasting ${msg.type} from ${deviceId} to web clients`);
+        }
+        
         const broadcast = {
           type: msg.type || "message",
           deviceId: deviceId,
@@ -113,7 +118,7 @@ wss.on("connection", (ws, req) => {
           files: msg.files
         };
         
-        broadcastToWebClients(broadcast);
+        broadcastToWebClients(broadcast); // <-- ЭТО ДОЛЖНО ВЫЗЫВАТЬСЯ!
         console.log(`Message from ${deviceId}: ${msg.type}`);
         
       } catch (err) {
@@ -131,6 +136,7 @@ wss.on("connection", (ws, req) => {
     });
 
   } else {
+    // Это веб-клиент
     webClients.add(ws);
     console.log(`Web client connected. Total: ${webClients.size}`);
 
@@ -158,10 +164,6 @@ wss.on("connection", (ws, req) => {
       console.error("Web client WebSocket error:", err);
     });
   }
-});
-
-wss.on("error", (err) => {
-  console.error("WebSocket server error:", err);
 });
 
 app.post("/api/login", (req, res) => {
@@ -423,3 +425,4 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
