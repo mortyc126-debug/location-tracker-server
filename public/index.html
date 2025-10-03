@@ -1082,7 +1082,7 @@
             
             selectedDeviceId = deviceId;
             
-            const wsProtocol = window.location.protocol === 'https:' : 'wss:' : 'ws:';
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${wsProtocol}//${window.location.host}/ws/live?deviceId=${deviceId}`;
             
             console.log('Connecting to WebSocket:', wsUrl);
@@ -2213,6 +2213,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
