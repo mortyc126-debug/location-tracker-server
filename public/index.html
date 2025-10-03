@@ -1070,83 +1070,35 @@
 
 // === WEBSOCKET AND CAMERA FUNCTIONS ===
 
-        // Аудио контекст - объявляем ОДИН раз
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         let audioQueue = [];
-        let isPlaying = false;
+let isPlaying = false;
+let audioContext = null;
 
-        function connectToDevice(deviceId) {
-    if (deviceWebSocket) {
-        deviceWebSocket.close();
+function initAudioContext() {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
     }
-    
-    selectedDeviceId = deviceId;
-    
-    // ИСПРАВЬТЕ ЭТУ СТРОКУ:
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = window.location.host; // используем текущий хост
-    const wsUrl = `${wsProtocol}//${wsHost}/ws/live?deviceId=${deviceId}`;
-    
-    console.log('Connecting to WebSocket:', wsUrl);
-    
-    deviceWebSocket = new WebSocket(wsUrl);
-    
-    deviceWebSocket.onopen = () => {
-        console.log('✅ WebSocket connected for live stream');
-        document.getElementById('streamStatus').textContent = 'Connected';
-        document.getElementById('streamStatus').style.color = 'var(--success-green)';
-        enableCameraControls();
-    };
-    
-    deviceWebSocket.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            
-            if (data.type === 'image') {
-                displayLiveImage(data.data);
-            } 
-            else if (data.type === 'audio') {
-                playAudioData(data.data);
-            }
-            else if (data.type === 'file_list') {
-                displayFileList(data.files);
-            }
-        } catch (error) {
-            console.error('Error processing WebSocket message:', error);
-        }
-    };
-    
-    deviceWebSocket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        document.getElementById('streamStatus').textContent = 'Error';
-        document.getElementById('streamStatus').style.color = 'var(--danger-red)';
-    };
-    
-    deviceWebSocket.onclose = () => {
-        console.log('WebSocket disconnected');
-        document.getElementById('streamStatus').textContent = 'Disconnected';
-        document.getElementById('streamStatus').style.color = 'var(--danger-red)';
-        disableCameraControls();
-    };
 }
 
-        function playAudioData(base64Data) {
+function playAudioData(base64Data) {
     try {
+        initAudioContext();
+        
         const binaryString = atob(base64Data);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
         }
 
-        // Конвертируем PCM 16-bit в Float32
+        // Конвертируем PCM 16-bit signed в Float32
         const samples = new Float32Array(bytes.length / 2);
         for (let i = 0; i < samples.length; i++) {
             const int16 = (bytes[i * 2] & 0xff) | ((bytes[i * 2 + 1] & 0xff) << 8);
-            // Правильная конвертация signed int16
             samples[i] = int16 >= 0x8000 ? (int16 - 0x10000) / 32768 : int16 / 32767;
         }
 
         audioQueue.push(samples);
+        
         if (!isPlaying) {
             processAudioQueue();
         }
@@ -1161,21 +1113,16 @@ function processAudioQueue() {
         isPlaying = false;
         return;
     }
+    
     isPlaying = true;
-
     const samples = audioQueue.shift();
     
-    // Создаём стерео буфер для 44100 Hz
-    const numFrames = samples.length / 2;
-    const buffer = audioContext.createBuffer(2, numFrames, 44100);
+    // Моно буфер 16 кГц
+    const buffer = audioContext.createBuffer(1, samples.length, 16000);
+    const channel = buffer.getChannelData(0);
     
-    const left = buffer.getChannelData(0);
-    const right = buffer.getChannelData(1);
-    
-    // Разделяем стерео каналы
-    for (let i = 0; i < numFrames; i++) {
-        left[i] = samples[i * 2];
-        right[i] = samples[i * 2 + 1];
+    for (let i = 0; i < samples.length; i++) {
+        channel[i] = samples[i];
     }
 
     const source = audioContext.createBufferSource();
@@ -1187,9 +1134,26 @@ function processAudioQueue() {
         source.start();
     } catch (e) {
         console.error("Audio play error:", e);
-        processAudioQueue(); // Пробуем следующий
+        processAudioQueue();
     }
 }
+
+// ДОБАВЬТЕ очистку при остановке аудио
+async function sendCommand(command) {
+    if (!selectedDeviceId) {
+        showNotification('Please select a device first', 'error');
+        return;
+    }
+
+    if (command === 'STOP_AUDIO') {
+        audioQueue = [];
+        isPlaying = false;
+        if (audioContext) {
+            await audioContext.close();
+            audioContext = null;
+        }
+    }
+
 
         function displayLiveImage(base64Data) {
             const canvas = document.getElementById('imageCanvas');
@@ -2316,6 +2280,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
