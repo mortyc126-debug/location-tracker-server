@@ -175,6 +175,46 @@ app.get('/api/device/:deviceId/files/:token', (req, res) => {
   }
 });
 
+app.get("/api/analytics/:deviceId/:token", async (req, res) => {
+  const { deviceId, token } = req.params;
+  const days = parseInt(req.query.days) || 7;
+  
+  if (token !== SECRET_TOKEN) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+    
+    const { data, error } = await supabase
+      .from("locations")
+      .select("*")
+      .eq("device_id", deviceId)
+      .gte("timestamp", cutoff)
+      .order("timestamp", { ascending: true });
+
+    if (error) throw error;
+
+    let totalDistance = 0;
+    for (let i = 1; i < data.length; i++) {
+      const prev = data[i - 1];
+      const curr = data[i];
+      totalDistance += getDistance(
+        parseFloat(prev.latitude), parseFloat(prev.longitude),
+        parseFloat(curr.latitude), parseFloat(curr.longitude)
+      );
+    }
+
+    return res.json({
+      total_distance: totalDistance / 1000,
+      total_points: data.length,
+      locations: data
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "Database error" });
+  }
+});
+
 app.get('/api/device/:deviceId/command/:token', (req, res) => {
   const { deviceId, token } = req.params;
   
