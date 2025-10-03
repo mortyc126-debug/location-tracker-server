@@ -1114,7 +1114,7 @@ function playAudioData(base64Data) {
         const dataView = new DataView(bytes.buffer);
         
         for (let i = 0; i < samples.length; i++) {
-            const int16 = dataView.getInt16(i * 2, true); // little-endian
+            const int16 = dataView.getInt16(i * 2, true);
             samples[i] = int16 / 32768.0;
         }
 
@@ -1310,24 +1310,32 @@ function disableCameraControls() {
 
         // === FILE SYSTEM FUNCTIONS ===
         async function loadDeviceFiles() {
-            if (!selectedDeviceId || !token) {
-                showError('Please select a device first');
-                return;
-            }
-            
-            try {
-                const response = await fetch(`/api/device/${selectedDeviceId}/files/${token}`);
-                if (!response.ok) throw new Error('Failed to load files');
-                
-                const data = await response.json();
-                displayFileList(data.files || []);
-                
-            } catch (error) {
-                console.error('Error loading files:', error);
-                document.getElementById('fileList').innerHTML = 
-                    '<div style="text-align: center; color: #666; padding: 40px;">Failed to load files</div>';
-            }
-        }
+    if (!selectedDeviceId || !token) {
+        alert('Please select a device first');
+        return;
+    }
+    
+    document.getElementById('fileList').innerHTML = 
+        '<div style="text-align: center; padding: 40px;"><div class="loading-spinner"></div><br>Loading files...</div>';
+    
+    console.log('Requesting files for device:', selectedDeviceId);
+    
+    try {
+        const response = await fetch(`/api/device/${selectedDeviceId}/files/${token}`);
+        console.log('Files response:', response.status);
+        
+        if (!response.ok) throw new Error('Failed to load files');
+        
+        const data = await response.json();
+        console.log('Files received:', data);
+        displayFileList(data.files || []);
+        
+    } catch (error) {
+        console.error('Error loading files:', error);
+        document.getElementById('fileList').innerHTML = 
+            '<div style="text-align: center; color: var(--danger-red); padding: 40px;">Failed to load files. Device may be offline.</div>';
+    }
+}
 
         function displayFileList(files) {
             const fileListElement = document.getElementById('fileList');
@@ -2331,6 +2339,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
