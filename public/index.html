@@ -1068,6 +1068,84 @@
             startRefreshInterval();
         }
 
+        function displayFileList(data) {
+    const fileListElement = document.getElementById('fileList');
+    fileListElement.innerHTML = '';
+    
+    if (!data || !data.categories) {
+        fileListElement.innerHTML = 
+            '<div style="text-align: center; color: #666; padding: 40px;">No files found</div>';
+        return;
+    }
+    
+    const categories = data.categories;
+    const tabs = ['images', 'videos', 'audio', 'documents'];
+    const icons = {
+        images: '🖼️',
+        videos: '🎬',
+        audio: '🎵',
+        documents: '📄'
+    };
+    
+    // Создаём табы
+    const tabsHtml = tabs.map(tab => 
+        `<button class="btn" onclick="showFileCategory('${tab}')" id="tab-${tab}">
+            ${icons[tab]} ${tab.toUpperCase()} (${categories[tab].length})
+        </button>`
+    ).join('');
+    
+    fileListElement.innerHTML = `
+        <div style="display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap;">
+            ${tabsHtml}
+        </div>
+        <div id="fileContent"></div>
+    `;
+    
+    // Показываем первую категорию
+    window.fileCategories = categories;
+    showFileCategory('images');
+}
+
+function showFileCategory(category) {
+    const content = document.getElementById('fileContent');
+    const files = window.fileCategories[category];
+    
+    // Подсвечиваем активный таб
+    document.querySelectorAll('[id^="tab-"]').forEach(btn => {
+        btn.style.background = '';
+    });
+    document.getElementById('tab-' + category).style.background = 'var(--primary-gold)';
+    
+    if (!files || files.length === 0) {
+        content.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">No files in this category</div>';
+        return;
+    }
+    
+    content.innerHTML = files.map(file => `
+        <div class="file-item">
+            <div style="margin-right: 10px; font-size: 20px;">${getFileIcon(file.type)}</div>
+            <div style="flex: 1;">
+                <div style="color: var(--text-primary); font-weight: 600;">${file.name}</div>
+                <div style="color: var(--text-muted); font-size: 11px;">
+                    ${file.size} • ${file.date}
+                </div>
+                <div style="color: var(--text-secondary); font-size: 10px; margin-top: 2px;">
+                    ${file.path}
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function getFileIcon(type) {
+    const icons = {
+        image: '🖼️',
+        video: '🎬',
+        audio: '🎵',
+        document: '📄'
+    };
+    return icons[type] || '📁';
+}
 // === WEBSOCKET AND CAMERA FUNCTIONS ===
 
 let audioQueue = [];
@@ -2339,6 +2417,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
