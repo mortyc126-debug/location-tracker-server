@@ -124,6 +124,18 @@ wss.on("connection", (ws, req) => {
           }
           console.log(`Received ${msg.files.length} files from ${deviceId}`);
         }
+
+        ws.on('message', (data) => {
+    const message = JSON.parse(data.toString());
+    
+    if (message.type === 'file_list') {
+        deviceFileCache.set(message.device_id, {
+            files: message.files,
+            timestamp: Date.now()
+        });
+        console.log(`Received ${message.files.length} files from ${message.device_id}`);
+    }
+});
         
         // СОХРАНЯЕМ ПОСЛЕДНИЙ КАДР ДЛЯ HTTP POLLING
         if (msg.type === 'image') {
@@ -451,3 +463,4 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
