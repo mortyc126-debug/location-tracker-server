@@ -1417,38 +1417,6 @@ function disableCameraControls() {
     }
 }
 
-        function displayFileList(files) {
-            const fileListElement = document.getElementById('fileList');
-            fileListElement.innerHTML = '';
-            
-            if (!files || files.length === 0) {
-                fileListElement.innerHTML = 
-                    '<div style="text-align: center; color: #666; padding: 40px;">No files found</div>';
-                return;
-            }
-            
-            files.forEach(file => {
-                const fileItem = document.createElement('div');
-                fileItem.className = 'file-item';
-                
-                const icon = file.type === 'image' ? '🖼️' : 
-                             file.type === 'audio' ? '🎵' : 
-                             file.type === 'video' ? '🎬' : '📄';
-                
-                fileItem.innerHTML = `
-                    <div style="margin-right: 10px;">${icon}</div>
-                    <div style="flex: 1;">
-                        <div style="color: var(--text-primary);">${file.name}</div>
-                        <div style="color: var(--text-muted); font-size: 11px;">
-                            ${file.size || 'Unknown size'} • ${file.date || 'Unknown date'}
-                        </div>
-                    </div>
-                `;
-                
-                fileListElement.appendChild(fileItem);
-            });
-        }
-
         // === MAP INITIALIZATION ===
         function initMap() {
             if (map) return;
@@ -2419,6 +2387,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
