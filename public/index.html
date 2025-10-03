@@ -1795,7 +1795,9 @@ function connectToDevice(deviceId) {
         }, 3000);
     }
 };
+}
 
+// ВЫНЕСИТЕ эту функцию ЗА ПРЕДЕЛЫ connectToDevice
 async function pollLatestImage(deviceId) {
     try {
         const response = await fetch(`/api/device/${deviceId}/latest-image`);
@@ -2328,6 +2330,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
