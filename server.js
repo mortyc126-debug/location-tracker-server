@@ -104,7 +104,10 @@ wss.on("connection", (ws, req) => {
     data: msg.data,
     timestamp: Date.now()
   });
-  console.log(`📁 Received file list from ${deviceId}: ${msg.data.total} files`);
+  
+  // ИСПРАВЛЕНО: безопасный доступ к total
+  const totalFiles = (msg.data && msg.data.total) || 0;
+  console.log(`📁 Received file list from ${deviceId}: ${totalFiles} files`);
   return;
 }
         
@@ -477,5 +480,6 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
