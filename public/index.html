@@ -1145,13 +1145,19 @@ async function sendCommand(command) {
         return;
     }
 
-    // Очистка canvas при остановке видео
+    // Управление флагом стрима
+    if (command === 'START_LIVE_STREAM') {
+        isStreamActive = true;
+    }
+    
     if (command === 'STOP_LIVE_STREAM') {
+        isStreamActive = false;
+        
         const canvas = document.getElementById('liveCanvas');
         if (canvas) {
             const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            // Опционально: показать текст
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
             ctx.fillStyle = '#666';
             ctx.font = '20px Arial';
             ctx.textAlign = 'center';
@@ -1159,7 +1165,6 @@ async function sendCommand(command) {
         }
     }
 
-    // Очистка аудио при остановке
     if (command === 'STOP_AUDIO') {
         audioQueue = [];
         isPlaying = false;
@@ -1182,27 +1187,28 @@ async function sendCommand(command) {
 
         if (response.ok) {
             showNotification(`Command ${command} sent`, 'success');
-            console.log(`Command sent: ${command}`);
         }
     } catch (error) {
-        console.error('Command error:', error);
         showNotification('Failed to send command', 'error');
     }
 }
 
 
-        function displayLiveImage(base64Data) {
-            const canvas = document.getElementById('imageCanvas');
-            const ctx = canvas.getContext('2d');
-            
-            const img = new Image();
-            img.onload = () => {
-                canvas.width = img.width;
-                canvas.height = img.height;
-                ctx.drawImage(img, 0, 0);
-            };
-            img.src = 'data:image/jpeg;base64,' + base64Data;
-        }
+        let isStreamActive = false;
+
+function displayLiveImage(base64Data) {
+    if (!isStreamActive) return; // НЕ отображаем если стрим остановлен
+    
+    const canvas = document.getElementById('liveCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    const img = new Image();
+    img.onload = function() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    };
+    img.src = 'data:image/jpeg;base64,' + base64Data;
+}
 
         async function toggleLiveStream() {
             if (!selectedDeviceId || !deviceWebSocket) {
@@ -2325,6 +2331,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
