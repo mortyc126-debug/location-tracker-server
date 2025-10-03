@@ -1130,7 +1130,7 @@ function processAudioQueue() {
     isPlaying = true;
     const samples = audioQueue.shift();
     
-    const buffer = audioContext.createBuffer(1, samples.length, 16000);
+    const buffer = audioContext.createBuffer(1, samples.length, 8000);
     const channel = buffer.getChannelData(0);
     
     for (let i = 0; i < samples.length; i++) {
@@ -2320,6 +2320,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
