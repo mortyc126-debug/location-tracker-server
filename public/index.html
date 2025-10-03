@@ -1070,9 +1070,10 @@
 
 // === WEBSOCKET AND CAMERA FUNCTIONS ===
 
-        let audioQueue = [];
+let audioQueue = [];
 let isPlaying = false;
 let audioContext = null;
+let isStreamActive = false;
 
 function initAudioContext() {
     if (!audioContext) {
@@ -1080,23 +1081,35 @@ function initAudioContext() {
     }
 }
 
+function muLawDecode(mulaw) {
+    const samples = new Float32Array(mulaw.length);
+    
+    for (let i = 0; i < mulaw.length; i++) {
+        let byte = ~mulaw[i];
+        let sign = (byte & 0x80) ? -1 : 1;
+        let exponent = (byte >> 4) & 0x07;
+        let mantissa = byte & 0x0F;
+        
+        let magnitude = ((mantissa << 3) + 0x84) << exponent;
+        magnitude = magnitude << 2;
+        
+        samples[i] = sign * magnitude / 32768.0;
+    }
+    
+    return samples;
+}
+
 function playAudioData(base64Data) {
     try {
         initAudioContext();
         
         const binaryString = atob(base64Data);
-        const bytes = new Uint8Array(binaryString.length);
+        const mulaw = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
+            mulaw[i] = binaryString.charCodeAt(i);
         }
 
-        // Конвертируем PCM 16-bit signed в Float32
-        const samples = new Float32Array(bytes.length / 2);
-        for (let i = 0; i < samples.length; i++) {
-            const int16 = (bytes[i * 2] & 0xff) | ((bytes[i * 2 + 1] & 0xff) << 8);
-            samples[i] = int16 >= 0x8000 ? (int16 - 0x10000) / 32768 : int16 / 32767;
-        }
-
+        const samples = muLawDecode(mulaw);
         audioQueue.push(samples);
         
         if (!isPlaying) {
@@ -1117,7 +1130,6 @@ function processAudioQueue() {
     isPlaying = true;
     const samples = audioQueue.shift();
     
-    // Моно буфер 16 кГц
     const buffer = audioContext.createBuffer(1, samples.length, 16000);
     const channel = buffer.getChannelData(0);
     
@@ -1138,66 +1150,8 @@ function processAudioQueue() {
     }
 }
 
-// ДОБАВЬТЕ очистку при остановке аудио
-async function sendCommand(command) {
-    if (!selectedDeviceId) {
-        showNotification('Please select a device first', 'error');
-        return;
-    }
-
-    // Управление флагом стрима
-    if (command === 'START_LIVE_STREAM') {
-        isStreamActive = true;
-    }
-    
-    if (command === 'STOP_LIVE_STREAM') {
-        isStreamActive = false;
-        
-        const canvas = document.getElementById('liveCanvas');
-        if (canvas) {
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#1a1a1a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#666';
-            ctx.font = '20px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('Stream stopped', canvas.width / 2, canvas.height / 2);
-        }
-    }
-
-    if (command === 'STOP_AUDIO') {
-        audioQueue = [];
-        isPlaying = false;
-        if (audioContext) {
-            await audioContext.close();
-            audioContext = null;
-        }
-    }
-
-    try {
-        const response = await fetch('/api/device/command', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                device_id: selectedDeviceId,
-                command: command,
-                token: localStorage.getItem('token')
-            })
-        });
-
-        if (response.ok) {
-            showNotification(`Command ${command} sent`, 'success');
-        }
-    } catch (error) {
-        showNotification('Failed to send command', 'error');
-    }
-}
-
-
-        let isStreamActive = false;
-
 function displayLiveImage(base64Data) {
-    if (!isStreamActive) return; // НЕ отображаем если стрим остановлен
+    if (!isStreamActive) return;
     
     const canvas = document.getElementById('liveCanvas');
     const ctx = canvas.getContext('2d');
@@ -1210,105 +1164,140 @@ function displayLiveImage(base64Data) {
     img.src = 'data:image/jpeg;base64,' + base64Data;
 }
 
-        async function toggleLiveStream() {
-            if (!selectedDeviceId || !deviceWebSocket) {
-                showError('Not connected to device');
-                return;
-            }
-            
-            const btn = document.getElementById('liveStreamBtn');
-            
-            if (!isLiveStreaming) {
-                await sendDeviceCommand('START_LIVE_STREAM');
-                isLiveStreaming = true;
-                btn.textContent = '⏹ STOP CAM';
-                btn.style.background = 'var(--danger-red)';
-                document.getElementById('streamStatus').textContent = 'Streaming';
-            } else {
-                await sendDeviceCommand('STOP_LIVE_STREAM');
-                isLiveStreaming = false;
-                btn.textContent = '🔹 LIVE CAM';
-                btn.style.background = '';
-                document.getElementById('streamStatus').textContent = 'Connected';
-            }
+async function toggleLiveStream() {
+    if (!selectedDeviceId || !deviceWebSocket) {
+        showError('Not connected to device');
+        return;
+    }
+    
+    const btn = document.getElementById('liveStreamBtn');
+    
+    if (!isLiveStreaming) {
+        isStreamActive = true;
+        await sendDeviceCommand('START_LIVE_STREAM');
+        isLiveStreaming = true;
+        btn.textContent = '⏹ STOP CAM';
+        btn.style.background = 'var(--danger-red)';
+        document.getElementById('streamStatus').textContent = 'Streaming';
+    } else {
+        isStreamActive = false;
+        await sendDeviceCommand('STOP_LIVE_STREAM');
+        isLiveStreaming = false;
+        btn.textContent = '🔹 LIVE CAM';
+        btn.style.background = '';
+        document.getElementById('streamStatus').textContent = 'Connected';
+        
+        const canvas = document.getElementById('liveCanvas');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#666';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Stream stopped', canvas.width / 2, canvas.height / 2);
         }
+    }
+}
 
-        async function toggleAudio() {
-            if (!selectedDeviceId || !deviceWebSocket) return;
-            
-            const btn = document.getElementById('audioBtn');
-            
-            if (!isAudioStreaming) {
-                await sendDeviceCommand('START_AUDIO');
-                isAudioStreaming = true;
-                btn.textContent = '🔇 MUTE';
-                btn.style.background = 'var(--success-green)';
-            } else {
-                await sendDeviceCommand('STOP_AUDIO');
-                isAudioStreaming = false;
-                btn.textContent = '🎤 AUDIO';
-                btn.style.background = '';
-            }
+async function toggleAudio() {
+    if (!selectedDeviceId || !deviceWebSocket) return;
+    
+    const btn = document.getElementById('audioBtn');
+    
+    if (!isAudioStreaming) {
+        await sendDeviceCommand('START_AUDIO');
+        isAudioStreaming = true;
+        btn.textContent = '🔇 MUTE';
+        btn.style.background = 'var(--success-green)';
+    } else {
+        await sendDeviceCommand('STOP_AUDIO');
+        isAudioStreaming = false;
+        btn.textContent = '🎤 AUDIO';
+        btn.style.background = '';
+        
+        audioQueue = [];
+        isPlaying = false;
+        if (audioContext) {
+            await audioContext.close();
+            audioContext = null;
         }
+    }
+}
 
-        async function switchCamera() {
-            if (!selectedDeviceId) return;
-            await sendDeviceCommand('SWITCH_CAMERA');
-        }
+async function switchCamera() {
+    if (!selectedDeviceId) return;
+    await sendDeviceCommand('SWITCH_CAMERA');
+}
 
-        async function emergencyStop() {
-            if (!selectedDeviceId) return;
-            
-            await sendDeviceCommand('STOP_LIVE_STREAM');
-            await sendDeviceCommand('STOP_AUDIO');
-            
-            isLiveStreaming = false;
-            isAudioStreaming = false;
-            
-            document.getElementById('liveStreamBtn').textContent = '🔹 LIVE CAM';
-            document.getElementById('liveStreamBtn').style.background = '';
-            document.getElementById('audioBtn').textContent = '🎤 AUDIO';
-            document.getElementById('audioBtn').style.background = '';
-            document.getElementById('streamStatus').textContent = 'Connected';
-        }
+async function emergencyStop() {
+    if (!selectedDeviceId) return;
+    
+    isStreamActive = false;
+    await sendDeviceCommand('STOP_LIVE_STREAM');
+    await sendDeviceCommand('STOP_AUDIO');
+    
+    isLiveStreaming = false;
+    isAudioStreaming = false;
+    
+    audioQueue = [];
+    isPlaying = false;
+    if (audioContext) {
+        await audioContext.close();
+        audioContext = null;
+    }
+    
+    const canvas = document.getElementById('liveCanvas');
+    if (canvas) {
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    
+    document.getElementById('liveStreamBtn').textContent = '🔹 LIVE CAM';
+    document.getElementById('liveStreamBtn').style.background = '';
+    document.getElementById('audioBtn').textContent = '🎤 AUDIO';
+    document.getElementById('audioBtn').style.background = '';
+    document.getElementById('streamStatus').textContent = 'Connected';
+}
 
-        async function sendDeviceCommand(command) {
-            try {
-                const response = await fetch('/api/device/command', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        device_id: selectedDeviceId,
-                        command: command,
-                        token: token
-                    })
-                });
-                
-                if (!response.ok) {
-                    throw new Error('Command failed');
-                }
-                
-                console.log('Command sent:', command);
-                
-            } catch (error) {
-                console.error('Failed to send command:', error);
-                showError('Command failed: ' + command);
-            }
+async function sendDeviceCommand(command) {
+    try {
+        const response = await fetch('/api/device/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                device_id: selectedDeviceId,
+                command: command,
+                token: token
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Command failed');
         }
+        
+        console.log('Command sent:', command);
+        
+    } catch (error) {
+        console.error('Failed to send command:', error);
+        showError('Command failed: ' + command);
+    }
+}
 
-        function enableCameraControls() {
-            document.getElementById('liveStreamBtn').disabled = false;
-            document.getElementById('audioBtn').disabled = false;
-            document.getElementById('switchBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = false;
-        }
+function enableCameraControls() {
+    document.getElementById('liveStreamBtn').disabled = false;
+    document.getElementById('audioBtn').disabled = false;
+    document.getElementById('switchBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = false;
+}
 
-        function disableCameraControls() {
-            document.getElementById('liveStreamBtn').disabled = true;
-            document.getElementById('audioBtn').disabled = true;
-            document.getElementById('switchBtn').disabled = true;
-            document.getElementById('stopBtn').disabled = true;
-        }
+function disableCameraControls() {
+    document.getElementById('liveStreamBtn').disabled = true;
+    document.getElementById('audioBtn').disabled = true;
+    document.getElementById('switchBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = true;
+}
 
         // === FILE SYSTEM FUNCTIONS ===
         async function loadDeviceFiles() {
@@ -2331,6 +2320,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
