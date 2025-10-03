@@ -1076,58 +1076,59 @@
         let isPlaying = false;
 
         function connectToDevice(deviceId) {
-            if (deviceWebSocket) {
-                deviceWebSocket.close();
+    if (deviceWebSocket) {
+        deviceWebSocket.close();
+    }
+    
+    selectedDeviceId = deviceId;
+    
+    // ИСПРАВЬТЕ ЭТУ СТРОКУ:
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = window.location.host; // используем текущий хост
+    const wsUrl = `${wsProtocol}//${wsHost}/ws/live?deviceId=${deviceId}`;
+    
+    console.log('Connecting to WebSocket:', wsUrl);
+    
+    deviceWebSocket = new WebSocket(wsUrl);
+    
+    deviceWebSocket.onopen = () => {
+        console.log('✅ WebSocket connected for live stream');
+        document.getElementById('streamStatus').textContent = 'Connected';
+        document.getElementById('streamStatus').style.color = 'var(--success-green)';
+        enableCameraControls();
+    };
+    
+    deviceWebSocket.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'image') {
+                displayLiveImage(data.data);
+            } 
+            else if (data.type === 'audio') {
+                playAudioData(data.data);
             }
-            
-            selectedDeviceId = deviceId;
-            
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${wsProtocol}//${window.location.host}/ws/live?deviceId=${deviceId}`;
-            
-            console.log('Connecting to WebSocket:', wsUrl);
-            
-            deviceWebSocket = new WebSocket(wsUrl);
-            
-            deviceWebSocket.onopen = () => {
-                console.log('WebSocket connected');
-                document.getElementById('streamStatus').textContent = 'Connected';
-                document.getElementById('streamStatus').style.color = 'var(--success-green)';
-                enableCameraControls();
-            };
-            
-            deviceWebSocket.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    console.log('Received:', data.type);
-                    
-                    if (data.type === 'image') {
-                        displayLiveImage(data.data);
-                    } 
-                    else if (data.type === 'audio') {
-                        playAudioData(data.data);
-                    }
-                    else if (data.type === 'file_list') {
-                        displayFileList(data.files);
-                    }
-                } catch (error) {
-                    console.error('Error processing message:', error);
-                }
-            };
-            
-            deviceWebSocket.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                document.getElementById('streamStatus').textContent = 'Error';
-                document.getElementById('streamStatus').style.color = 'var(--danger-red)';
-            };
-            
-            deviceWebSocket.onclose = () => {
-                console.log('WebSocket disconnected');
-                document.getElementById('streamStatus').textContent = 'Disconnected';
-                document.getElementById('streamStatus').style.color = 'var(--danger-red)';
-                disableCameraControls();
-            };
+            else if (data.type === 'file_list') {
+                displayFileList(data.files);
+            }
+        } catch (error) {
+            console.error('Error processing WebSocket message:', error);
         }
+    };
+    
+    deviceWebSocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        document.getElementById('streamStatus').textContent = 'Error';
+        document.getElementById('streamStatus').style.color = 'var(--danger-red)';
+    };
+    
+    deviceWebSocket.onclose = () => {
+        console.log('WebSocket disconnected');
+        document.getElementById('streamStatus').textContent = 'Disconnected';
+        document.getElementById('streamStatus').style.color = 'var(--danger-red)';
+        disableCameraControls();
+    };
+}
 
         function playAudioData(base64Data) {
             try {
@@ -2213,6 +2214,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
