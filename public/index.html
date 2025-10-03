@@ -1138,11 +1138,12 @@
             bytes[i] = binaryString.charCodeAt(i);
         }
 
-        // Конвертируем PCM в Float32 для AudioContext
+        // Конвертируем PCM 16-bit в Float32
         const samples = new Float32Array(bytes.length / 2);
         for (let i = 0; i < samples.length; i++) {
-            const sample = (bytes[i * 2] | (bytes[i * 2 + 1] << 8));
-            samples[i] = sample < 0x8000 ? sample / 0x8000 : (sample - 0x10000) / 0x8000;
+            const int16 = (bytes[i * 2] & 0xff) | ((bytes[i * 2 + 1] & 0xff) << 8);
+            // Правильная конвертация signed int16
+            samples[i] = int16 >= 0x8000 ? (int16 - 0x10000) / 32768 : int16 / 32767;
         }
 
         audioQueue.push(samples);
@@ -1155,7 +1156,7 @@
     }
 }
 
-        function processAudioQueue() {
+function processAudioQueue() {
     if (audioQueue.length === 0) {
         isPlaying = false;
         return;
@@ -1164,14 +1165,15 @@
 
     const samples = audioQueue.shift();
     
-    // Создаём стерео буфер
-    const buffer = audioContext.createBuffer(2, samples.length / 2, 44100);
+    // Создаём стерео буфер для 44100 Hz
+    const numFrames = samples.length / 2;
+    const buffer = audioContext.createBuffer(2, numFrames, 44100);
     
-    // Разделяем на левый и правый канал
     const left = buffer.getChannelData(0);
     const right = buffer.getChannelData(1);
     
-    for (let i = 0; i < samples.length / 2; i++) {
+    // Разделяем стерео каналы
+    for (let i = 0; i < numFrames; i++) {
         left[i] = samples[i * 2];
         right[i] = samples[i * 2 + 1];
     }
@@ -1180,7 +1182,13 @@
     source.buffer = buffer;
     source.connect(audioContext.destination);
     source.onended = () => processAudioQueue();
-    source.start();
+    
+    try {
+        source.start();
+    } catch (e) {
+        console.error("Audio play error:", e);
+        processAudioQueue(); // Пробуем следующий
+    }
 }
 
         function displayLiveImage(base64Data) {
@@ -1707,6 +1715,89 @@
             disableCameraControls();
         }
 
+        let pollInterval = null;
+
+function connectToDevice(deviceId) {
+    if (deviceWebSocket) {
+        deviceWebSocket.close();
+    }
+    
+    if (pollInterval) {
+        clearInterval(pollInterval);
+    }
+    
+    selectedDeviceId = deviceId;
+    
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = window.location.host;
+    const wsUrl = `${wsProtocol}//${wsHost}/ws/live?deviceId=${deviceId}`;
+    
+    console.log('Connecting to WebSocket:', wsUrl);
+    
+    deviceWebSocket = new WebSocket(wsUrl);
+    
+    deviceWebSocket.onopen = () => {
+        console.log('✅ WebSocket connected for live stream');
+        document.getElementById('streamStatus').textContent = 'Connected';
+        document.getElementById('streamStatus').style.color = 'var(--success-green)';
+        enableCameraControls();
+        
+        // Останавливаем HTTP polling
+        if (pollInterval) {
+            clearInterval(pollInterval);
+            pollInterval = null;
+        }
+    };
+    
+    deviceWebSocket.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'image') {
+                displayLiveImage(data.data);
+            } 
+            else if (data.type === 'audio') {
+                playAudioData(data.data);
+            }
+        } catch (error) {
+            console.error('Error processing WebSocket message:', error);
+        }
+    };
+    
+    deviceWebSocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        document.getElementById('streamStatus').textContent = 'Error';
+        document.getElementById('streamStatus').style.color = 'var(--danger-red)';
+    };
+    
+    deviceWebSocket.onclose = () => {
+        console.log('WebSocket disconnected - starting HTTP polling fallback');
+        document.getElementById('streamStatus').textContent = 'HTTP Mode';
+        document.getElementById('streamStatus').style.color = 'orange';
+        
+        // Запускаем HTTP polling каждые 3 секунды
+        if (!pollInterval) {
+            pollInterval = setInterval(() => {
+                pollLatestImage(deviceId);
+            }, 3000);
+        }
+    };
+}
+
+async function pollLatestImage(deviceId) {
+    try {
+        const response = await fetch(`/api/device/${deviceId}/latest-image`);
+        if (response.ok) {
+            const data = await response.json();
+            if (data.image) {
+                displayLiveImage(data.image);
+            }
+        }
+    } catch (error) {
+        console.error('HTTP polling error:', error);
+    }
+}
+
         // === UI CONTROL FUNCTIONS ===
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
@@ -2225,6 +2316,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
