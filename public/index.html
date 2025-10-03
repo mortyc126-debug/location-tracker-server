@@ -1068,67 +1068,6 @@
             startRefreshInterval();
         }
 
-     // === WEBSOCKET AND CAMERA FUNCTIONS ===
-
-// ОБЪЯВИТЕ audioContext ОДИН РАЗ В НАЧАЛЕ ФАЙЛА:
-const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-
-function connectToDevice(deviceId) {
-    if (deviceWebSocket) {
-        deviceWebSocket.close();
-    }
-    
-    selectedDeviceId = deviceId;
-    
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws/live?deviceId=${deviceId}`;
-    
-    console.log('Connecting to WebSocket:', wsUrl);
-    
-    deviceWebSocket = new WebSocket(wsUrl);
-    
-    deviceWebSocket.onopen = () => {
-        console.log('WebSocket connected');
-        document.getElementById('streamStatus').textContent = 'Connected';
-        document.getElementById('streamStatus').style.color = 'var(--success-green)';
-        enableCameraControls();
-    };
-    
-    // ВОТ ЗДЕСЬ ДОБАВЬТЕ ОБРАБОТКУ АУДИО:
-    deviceWebSocket.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            console.log('Received:', data.type);
-            
-            if (data.type === 'image') {
-                updateCameraFeed(data.data);
-            } 
-            else if (data.type === 'audio') {
-                // ОБРАБОТКА АУДИО
-                playAudioData(data.data);
-            }
-            else if (data.type === 'file_list') {
-                updateFileList(data.files);
-            }
-        } catch (error) {
-            console.error('Error processing message:', error);
-        }
-    };
-    
-    deviceWebSocket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        document.getElementById('streamStatus').textContent = 'Error';
-        document.getElementById('streamStatus').style.color = 'var(--error-red)';
-    };
-    
-    deviceWebSocket.onclose = () => {
-        console.log('WebSocket disconnected');
-        document.getElementById('streamStatus').textContent = 'Disconnected';
-        document.getElementById('streamStatus').style.color = 'var(--error-red)';
-        disableCameraControls();
-    };
-}
-
 // === АУДИО ПЛЕЕР ===
 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 let audioQueue = [];
@@ -2246,5 +2185,6 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
