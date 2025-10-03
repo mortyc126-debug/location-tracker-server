@@ -1104,12 +1104,20 @@ function playAudioData(base64Data) {
         initAudioContext();
         
         const binaryString = atob(base64Data);
-        const mulaw = new Uint8Array(binaryString.length);
+        const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
-            mulaw[i] = binaryString.charCodeAt(i);
+            bytes[i] = binaryString.charCodeAt(i);
         }
 
-        const samples = muLawDecode(mulaw);
+        // PCM 16-bit signed → Float32
+        const samples = new Float32Array(bytes.length / 2);
+        const dataView = new DataView(bytes.buffer);
+        
+        for (let i = 0; i < samples.length; i++) {
+            const int16 = dataView.getInt16(i * 2, true); // little-endian
+            samples[i] = int16 / 32768.0;
+        }
+
         audioQueue.push(samples);
         
         if (!isPlaying) {
@@ -2320,6 +2328,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
