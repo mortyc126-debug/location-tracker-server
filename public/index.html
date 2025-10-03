@@ -1138,12 +1138,9 @@ function processAudioQueue() {
     isPlaying = true;
     const samples = audioQueue.shift();
     
-    const buffer = audioContext.createBuffer(1, combined.length, 16000);
+    const buffer = audioContext.createBuffer(1, samples.length, 16000); // ИСПРАВЛЕНО
     const channel = buffer.getChannelData(0);
-    
-    for (let i = 0; i < samples.length; i++) {
-        channel[i] = samples[i];
-    }
+    channel.set(samples);
 
     const source = audioContext.createBufferSource();
     source.buffer = buffer;
@@ -1161,13 +1158,20 @@ function processAudioQueue() {
 function displayLiveImage(base64Data) {
     if (!isStreamActive) return;
     
-    const canvas = document.getElementById('liveCanvas');
+    const canvas = document.getElementById('imageCanvas');
+    if (!canvas) return;
+    
     const ctx = canvas.getContext('2d');
     
     const img = new Image();
     img.onload = function() {
+        canvas.width = img.width || 640;
+        canvas.height = img.height || 480;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+    };
+    img.onerror = function(e) {
+        console.error('Image load error:', e);
     };
     img.src = 'data:image/jpeg;base64,' + base64Data;
 }
@@ -2330,6 +2334,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
