@@ -1138,7 +1138,7 @@ function processAudioQueue() {
     isPlaying = true;
     const samples = audioQueue.shift();
     
-    const buffer = audioContext.createBuffer(1, samples.length, 16000); // ИСПРАВЛЕНО
+    const buffer = audioContext.createBuffer(1, samples.length, 16000);
     const channel = buffer.getChannelData(0);
     channel.set(samples);
 
@@ -1169,9 +1169,6 @@ function displayLiveImage(base64Data) {
         canvas.height = img.height || 480;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0);
-    };
-    img.onerror = function(e) {
-        console.error('Image load error:', e);
     };
     img.src = 'data:image/jpeg;base64,' + base64Data;
 }
@@ -2334,6 +2331,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
