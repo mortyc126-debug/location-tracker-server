@@ -390,7 +390,7 @@ function validateGPSPoint(lat, lng, accuracy) {
   return true;
 }
 
-function filterDuplicatePoints(locations, minDistance = 20) {
+function filterDuplicatePoints(locations, minDistance = 10) {
   if (!locations || locations.length < 2) return locations;
   const filtered = [locations[0]];
 
@@ -429,5 +429,6 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
