@@ -1131,46 +1131,57 @@
 }
 
         function playAudioData(base64Data) {
-            try {
-                const binaryString = atob(base64Data);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-
-                const samples = new Float32Array(bytes.length / 2);
-                for (let i = 0; i < samples.length; i++) {
-                    const sample = (bytes[i * 2] | (bytes[i * 2 + 1] << 8));
-                    samples[i] = sample / 32768.0;
-                }
-
-                audioQueue.push(samples);
-                if (!isPlaying) {
-                    processAudioQueue();
-                }
-
-            } catch (err) {
-                console.error("Audio decode error:", err);
-            }
+    try {
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
         }
+
+        // Конвертируем PCM в Float32 для AudioContext
+        const samples = new Float32Array(bytes.length / 2);
+        for (let i = 0; i < samples.length; i++) {
+            const sample = (bytes[i * 2] | (bytes[i * 2 + 1] << 8));
+            samples[i] = sample < 0x8000 ? sample / 0x8000 : (sample - 0x10000) / 0x8000;
+        }
+
+        audioQueue.push(samples);
+        if (!isPlaying) {
+            processAudioQueue();
+        }
+
+    } catch (err) {
+        console.error("Audio decode error:", err);
+    }
+}
 
         function processAudioQueue() {
-            if (audioQueue.length === 0) {
-                isPlaying = false;
-                return;
-            }
-            isPlaying = true;
+    if (audioQueue.length === 0) {
+        isPlaying = false;
+        return;
+    }
+    isPlaying = true;
 
-            const samples = audioQueue.shift();
-            const buffer = audioContext.createBuffer(1, samples.length, 16000);
-            buffer.getChannelData(0).set(samples);
+    const samples = audioQueue.shift();
+    
+    // Создаём стерео буфер
+    const buffer = audioContext.createBuffer(2, samples.length / 2, 44100);
+    
+    // Разделяем на левый и правый канал
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
+    
+    for (let i = 0; i < samples.length / 2; i++) {
+        left[i] = samples[i * 2];
+        right[i] = samples[i * 2 + 1];
+    }
 
-            const source = audioContext.createBufferSource();
-            source.buffer = buffer;
-            source.connect(audioContext.destination);
-            source.onended = () => processAudioQueue();
-            source.start();
-        }
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+    source.onended = () => processAudioQueue();
+    source.start();
+}
 
         function displayLiveImage(base64Data) {
             const canvas = document.getElementById('imageCanvas');
@@ -2214,6 +2225,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
