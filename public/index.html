@@ -1945,7 +1945,6 @@ function connectToDevice(deviceId) {
         document.getElementById('streamStatus').style.color = 'var(--success-green)';
         enableCameraControls();
         
-        // Останавливаем HTTP polling
         if (pollInterval) {
             clearInterval(pollInterval);
             pollInterval = null;
@@ -1953,22 +1952,22 @@ function connectToDevice(deviceId) {
     };
     
     deviceWebSocket.onmessage = (event) => {
-    try {
-        const data = JSON.parse(event.data);
-        
-        if (data.type === 'image') {
-            displayLiveImage(data.data);
-        } 
-        else if (data.type === 'audio') {
-            playAudioData(data.data);
+        try {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'image') {
+                displayLiveImage(data.data);
+            } 
+            else if (data.type === 'audio') {
+                playAudioData(data.data);
+            }
+            else if (data.type === 'file_download') {
+                handleFileDownload(data);
+            }
+        } catch (error) {
+            console.error('Error processing WebSocket message:', error);
         }
-        else if (data.type === 'file_download') {
-            handleFileDownload(data);
-        }
-    } catch (error) {
-        console.error('Error processing WebSocket message:', error);
-    }
-};
+    };
     
     deviceWebSocket.onerror = (error) => {
         console.error('WebSocket error:', error);
@@ -1977,29 +1976,28 @@ function connectToDevice(deviceId) {
     };
     
     deviceWebSocket.onclose = () => {
-    console.log('WebSocket disconnected');
-    document.getElementById('streamStatus').textContent = 'HTTP Mode';
-    document.getElementById('streamStatus').style.color = 'orange';
-    
-    // Очищаем canvas
-    const canvas = document.getElementById('liveCanvas');
-    if (canvas) {
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#666';
-        ctx.font = '20px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('Connecting...', canvas.width / 2, canvas.height / 2);
-    }
-    
-    if (!pollInterval) {
-        pollInterval = setInterval(() => {
-            pollLatestImage(deviceId);
-        }, 3000);
-    }
-};
+        console.log('WebSocket disconnected');
+        document.getElementById('streamStatus').textContent = 'HTTP Mode';
+        document.getElementById('streamStatus').style.color = 'orange';
+        
+        const canvas = document.getElementById('imageCanvas');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#666';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Connecting...', canvas.width / 2, canvas.height / 2);
+        }
+        
+        if (!pollInterval) {
+            pollInterval = setInterval(() => {
+                pollLatestImage(deviceId);
+            }, 3000);
+        }
+    };
+}
 
-// ВЫНЕСИТЕ эту функцию ЗА ПРЕДЕЛЫ connectToDevice
 async function pollLatestImage(deviceId) {
     try {
         const response = await fetch(`/api/device/${deviceId}/latest-image`);
@@ -2533,3 +2531,4 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
