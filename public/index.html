@@ -1140,8 +1140,39 @@ function showFileCategory(category) {
     `).join('');
 }
 
-async function downloadFile(filePath, fileName) {
+function downloadFile(filePath, fileName) {
+    // Очищаем флаг preview для обычного скачивания
+    window.pendingPreview = null;
+    
     if (!selectedDeviceId) return;
+    
+    fetch('/api/device/download-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            device_id: selectedDeviceId,
+            file_path: filePath,
+            token: token
+        })
+    }).catch(error => {
+        console.error('Download error:', error);
+        alert('Failed to request file');
+    });
+}
+
+function handleFileClick(filePath, fileName, fileType) {
+    // При клике на файл - открываем preview
+    previewFile(filePath, fileName, fileType);
+}
+
+async function previewFile(filePath, fileName, fileType) {
+    if (!selectedDeviceId) return;
+    
+    // Показываем индикатор загрузки
+    const loadingMsg = document.createElement('div');
+    loadingMsg.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 20px; border-radius: 10px; z-index: 9999;';
+    loadingMsg.innerHTML = '<div class="loading-spinner"></div><br>Loading file...';
+    document.body.appendChild(loadingMsg);
     
     try {
         const response = await fetch('/api/device/download-file', {
@@ -1155,21 +1186,15 @@ async function downloadFile(filePath, fileName) {
         });
         
         if (response.ok) {
-            alert('Download request sent. File will arrive shortly...');
+            // Файл придёт через WebSocket - сохраняем контекст для preview
+            window.pendingPreview = { fileName, fileType };
         }
         
     } catch (error) {
-        console.error('Download error:', error);
-        alert('Failed to request file');
+        console.error('Preview error:', error);
+        alert('Failed to load file');
+        document.body.removeChild(loadingMsg);
     }
-}
-
-function handleFileClick(filePath, fileName, fileType) {
-    previewFile(filePath, fileName, fileType);
-}
-
-async function previewFile(filePath, fileName, fileType) {
-    downloadFile(filePath, fileName);
 }
 
 function getFileIcon(type) {
@@ -1864,7 +1889,6 @@ function connectToDevice(deviceId) {
 
 function handleFileDownload(fileData) {
     try {
-        // Определяем MIME-type по расширению
         const extension = fileData.filename.split('.').pop().toLowerCase();
         const mimeTypes = {
             'jpg': 'image/jpeg',
@@ -1875,29 +1899,50 @@ function handleFileDownload(fileData) {
             'mp4': 'video/mp4',
             'mp3': 'audio/mpeg',
             'pdf': 'application/pdf',
-            'txt': 'text/plain',
-            'doc': 'application/msword',
-            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            'txt': 'text/plain'
         };
         
         const mimeType = mimeTypes[extension] || 'application/octet-stream';
-        
         const blob = base64ToBlob(fileData.data, mimeType);
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileData.filename;
-        document.body.appendChild(a); // ВАЖНО: добавляем в DOM
-        a.click();
-        document.body.removeChild(a); // Удаляем после клика
-        URL.revokeObjectURL(url);
         
-        console.log('✅ File downloaded:', fileData.filename, fileData.size, 'bytes');
-        alert(`File downloaded: ${fileData.filename}`);
+        // Удаляем индикатор загрузки
+        const loadingMsg = document.querySelector('[style*="Loading file"]');
+        if (loadingMsg) loadingMsg.remove();
+        
+        // Проверяем, это preview или download
+        if (window.pendingPreview) {
+            const url = URL.createObjectURL(blob);
+            
+            // Открываем в новой вкладке для просмотра
+            const previewWindow = window.open(url, '_blank');
+            
+            if (!previewWindow) {
+                alert('Please allow popups to preview files');
+            }
+            
+            // Очищаем через 1 минуту
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+            
+            window.pendingPreview = null;
+            console.log('✅ File opened for preview:', fileData.filename);
+        } else {
+            // Обычное скачивание
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileData.filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            console.log('✅ File downloaded:', fileData.filename);
+            alert(`File downloaded: ${fileData.filename}`);
+        }
         
     } catch (error) {
-        console.error('Download error:', error);
-        alert('Failed to download file: ' + error.message);
+        console.error('File handling error:', error);
+        alert('Failed to process file: ' + error.message);
     }
 }
 
@@ -2474,6 +2519,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
