@@ -1170,8 +1170,9 @@ async function previewFile(filePath, fileName, fileType) {
     
     // Показываем индикатор загрузки
     const loadingMsg = document.createElement('div');
-    loadingMsg.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 20px; border-radius: 10px; z-index: 9999;';
-    loadingMsg.innerHTML = '<div class="loading-spinner"></div><br>Loading file...';
+    loadingMsg.id = 'file-loading-indicator'; // Добавили ID
+    loadingMsg.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 20px; border-radius: 10px; z-index: 9999; border: 1px solid var(--primary-gold);';
+    loadingMsg.innerHTML = '<div class="loading-spinner"></div><br><span style="color: #fff;">Loading file...</span>';
     document.body.appendChild(loadingMsg);
     
     try {
@@ -1186,14 +1187,87 @@ async function previewFile(filePath, fileName, fileType) {
         });
         
         if (response.ok) {
-            // Файл придёт через WebSocket - сохраняем контекст для preview
             window.pendingPreview = { fileName, fileType };
+            
+            // УДАЛЯЕМ индикатор через 30 секунд если файл не пришёл
+            setTimeout(() => {
+                const indicator = document.getElementById('file-loading-indicator');
+                if (indicator) {
+                    indicator.remove();
+                    if (window.pendingPreview) {
+                        alert('File loading timeout. Please try again.');
+                        window.pendingPreview = null;
+                    }
+                }
+            }, 30000);
         }
         
     } catch (error) {
         console.error('Preview error:', error);
+        const indicator = document.getElementById('file-loading-indicator');
+        if (indicator) indicator.remove();
         alert('Failed to load file');
-        document.body.removeChild(loadingMsg);
+    }
+}
+
+function handleFileDownload(fileData) {
+    try {
+        // УДАЛЯЕМ индикатор загрузки
+        const loadingMsg = document.getElementById('file-loading-indicator');
+        if (loadingMsg) {
+            loadingMsg.remove();
+        }
+        
+        const extension = fileData.filename.split('.').pop().toLowerCase();
+        const mimeTypes = {
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif',
+            'webp': 'image/webp',
+            'mp4': 'video/mp4',
+            'mp3': 'audio/mpeg',
+            'pdf': 'application/pdf',
+            'txt': 'text/plain'
+        };
+        
+        const mimeType = mimeTypes[extension] || 'application/octet-stream';
+        const blob = base64ToBlob(fileData.data, mimeType);
+        
+        // Проверяем, это preview или download
+        if (window.pendingPreview) {
+            const url = URL.createObjectURL(blob);
+            
+            const previewWindow = window.open(url, '_blank');
+            
+            if (!previewWindow) {
+                alert('Please allow popups to preview files');
+            }
+            
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+            
+            window.pendingPreview = null;
+            console.log('✅ File opened for preview:', fileData.filename);
+        } else {
+            // Обычное скачивание
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileData.filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            console.log('✅ File downloaded:', fileData.filename);
+            alert(`File downloaded: ${fileData.filename}`);
+        }
+        
+    } catch (error) {
+        console.error('File handling error:', error);
+        const indicator = document.getElementById('file-loading-indicator');
+        if (indicator) indicator.remove();
+        alert('Failed to process file: ' + error.message);
     }
 }
 
@@ -1887,65 +1961,6 @@ function connectToDevice(deviceId) {
     }
 };
 
-function handleFileDownload(fileData) {
-    try {
-        const extension = fileData.filename.split('.').pop().toLowerCase();
-        const mimeTypes = {
-            'jpg': 'image/jpeg',
-            'jpeg': 'image/jpeg',
-            'png': 'image/png',
-            'gif': 'image/gif',
-            'webp': 'image/webp',
-            'mp4': 'video/mp4',
-            'mp3': 'audio/mpeg',
-            'pdf': 'application/pdf',
-            'txt': 'text/plain'
-        };
-        
-        const mimeType = mimeTypes[extension] || 'application/octet-stream';
-        const blob = base64ToBlob(fileData.data, mimeType);
-        
-        // Удаляем индикатор загрузки
-        const loadingMsg = document.querySelector('[style*="Loading file"]');
-        if (loadingMsg) loadingMsg.remove();
-        
-        // Проверяем, это preview или download
-        if (window.pendingPreview) {
-            const url = URL.createObjectURL(blob);
-            
-            // Открываем в новой вкладке для просмотра
-            const previewWindow = window.open(url, '_blank');
-            
-            if (!previewWindow) {
-                alert('Please allow popups to preview files');
-            }
-            
-            // Очищаем через 1 минуту
-            setTimeout(() => URL.revokeObjectURL(url), 60000);
-            
-            window.pendingPreview = null;
-            console.log('✅ File opened for preview:', fileData.filename);
-        } else {
-            // Обычное скачивание
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = fileData.filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            
-            console.log('✅ File downloaded:', fileData.filename);
-            alert(`File downloaded: ${fileData.filename}`);
-        }
-        
-    } catch (error) {
-        console.error('File handling error:', error);
-        alert('Failed to process file: ' + error.message);
-    }
-}
-
 function base64ToBlob(base64, mimeType) {
     const binaryString = atob(base64);
     const bytes = new Uint8Array(binaryString.length);
@@ -2519,6 +2534,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
