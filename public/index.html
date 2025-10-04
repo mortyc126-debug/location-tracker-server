@@ -1110,7 +1110,6 @@ function showFileCategory(category) {
     const content = document.getElementById('fileContent');
     const files = window.fileCategories[category];
     
-    // Подсвечиваем активный таб
     document.querySelectorAll('[id^="tab-"]').forEach(btn => {
         btn.style.background = '';
     });
@@ -1122,7 +1121,7 @@ function showFileCategory(category) {
     }
     
     content.innerHTML = files.map(file => `
-        <div class="file-item">
+        <div class="file-item" onclick="handleFileClick('${file.path}', '${file.name}', '${file.type}')" style="cursor: pointer;">
             <div style="margin-right: 10px; font-size: 20px;">${getFileIcon(file.type)}</div>
             <div style="flex: 1;">
                 <div style="color: var(--text-primary); font-weight: 600;">${file.name}</div>
@@ -1133,8 +1132,44 @@ function showFileCategory(category) {
                     ${file.path}
                 </div>
             </div>
+            <div style="display: flex; gap: 5px;">
+                <button class="icon-btn" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇</button>
+                <button class="icon-btn" onclick="event.stopPropagation(); previewFile('${file.path}', '${file.name}', '${file.type}')" title="Preview">👁</button>
+            </div>
         </div>
     `).join('');
+}
+
+async function downloadFile(filePath, fileName) {
+    if (!selectedDeviceId) return;
+    
+    try {
+        const response = await fetch('/api/device/download-file', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                device_id: selectedDeviceId,
+                file_path: filePath,
+                token: token
+            })
+        });
+        
+        if (response.ok) {
+            alert('Download request sent. File will arrive shortly...');
+        }
+        
+    } catch (error) {
+        console.error('Download error:', error);
+        alert('Failed to request file');
+    }
+}
+
+function handleFileClick(filePath, fileName, fileType) {
+    previewFile(filePath, fileName, fileType);
+}
+
+async function previewFile(filePath, fileName, fileType) {
+    downloadFile(filePath, fileName);
 }
 
 function getFileIcon(type) {
@@ -1810,18 +1845,43 @@ function connectToDevice(deviceId) {
     };
     
     deviceWebSocket.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            
-            if (data.type === 'image') {
-                displayLiveImage(data.data);
-            } 
-            else if (data.type === 'audio') {
-                playAudioData(data.data);
-            }
-        } catch (error) {
-            console.error('Error processing WebSocket message:', error);
+    try {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'image') {
+            displayLiveImage(data.data);
+        } 
+        else if (data.type === 'audio') {
+            playAudioData(data.data);
         }
+        else if (data.type === 'file_download') {
+            handleFileDownload(data);
+        }
+    } catch (error) {
+        console.error('Error processing WebSocket message:', error);
+    }
+};
+
+function handleFileDownload(fileData) {
+    const blob = base64ToBlob(fileData.data);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileData.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    console.log('File downloaded:', fileData.filename);
+}
+
+function base64ToBlob(base64) {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return new Blob([bytes]);
+}
     };
     
     deviceWebSocket.onerror = (error) => {
@@ -2387,6 +2447,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
