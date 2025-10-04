@@ -1210,6 +1210,16 @@ async function previewFile(filePath, fileName, fileType) {
     }
 }
 
+        function base64ToBlob(base64, mimeType) {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mimeType }); // ДОБАВЛЕН mimeType
+}
+    };
+        
 function handleFileDownload(fileData) {
     try {
         // УДАЛЯЕМ индикатор загрузки
@@ -1960,16 +1970,6 @@ function connectToDevice(deviceId) {
         console.error('Error processing WebSocket message:', error);
     }
 };
-
-function base64ToBlob(base64, mimeType) {
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
-    return new Blob([bytes], { type: mimeType }); // ДОБАВЛЕН mimeType
-}
-    };
     
     deviceWebSocket.onerror = (error) => {
         console.error('WebSocket error:', error);
@@ -2534,31 +2534,3 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
