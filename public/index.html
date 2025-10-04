@@ -1863,24 +1863,51 @@ function connectToDevice(deviceId) {
 };
 
 function handleFileDownload(fileData) {
-    const blob = base64ToBlob(fileData.data);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileData.filename;
-    a.click();
-    URL.revokeObjectURL(url);
-    
-    console.log('File downloaded:', fileData.filename);
+    try {
+        // Определяем MIME-type по расширению
+        const extension = fileData.filename.split('.').pop().toLowerCase();
+        const mimeTypes = {
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif',
+            'webp': 'image/webp',
+            'mp4': 'video/mp4',
+            'mp3': 'audio/mpeg',
+            'pdf': 'application/pdf',
+            'txt': 'text/plain',
+            'doc': 'application/msword',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        };
+        
+        const mimeType = mimeTypes[extension] || 'application/octet-stream';
+        
+        const blob = base64ToBlob(fileData.data, mimeType);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileData.filename;
+        document.body.appendChild(a); // ВАЖНО: добавляем в DOM
+        a.click();
+        document.body.removeChild(a); // Удаляем после клика
+        URL.revokeObjectURL(url);
+        
+        console.log('✅ File downloaded:', fileData.filename, fileData.size, 'bytes');
+        alert(`File downloaded: ${fileData.filename}`);
+        
+    } catch (error) {
+        console.error('Download error:', error);
+        alert('Failed to download file: ' + error.message);
+    }
 }
 
-function base64ToBlob(base64) {
+function base64ToBlob(base64, mimeType) {
     const binaryString = atob(base64);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i);
     }
-    return new Blob([bytes]);
+    return new Blob([bytes], { type: mimeType }); // ДОБАВЛЕН mimeType
 }
     };
     
@@ -2447,6 +2474,7 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
 
