@@ -1550,7 +1550,6 @@ function disableCameraControls() {
         const data = await response.json();
         console.log('Files received:', data);
         
-        // ИСПРАВЛЕНО: передаём весь объект data, а не data.files
         displayFileList(data);
         
     } catch (error) {
@@ -2531,5 +2530,6 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
 
