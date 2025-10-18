@@ -2000,7 +2000,7 @@ function connectToDevice(deviceId) {
 
 async function pollLatestImage(deviceId) {
     try {
-        const response = await fetch(`/api/device/${deviceId}/latest-image`);
+        const response = await fetch(`/api/device/${deviceId}/latest-image/${token}`);
         if (response.ok) {
             const data = await response.json();
             if (data.image) {
@@ -2531,4 +2531,5 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
+
 
