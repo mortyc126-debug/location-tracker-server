@@ -191,18 +191,12 @@ wss.on("connection", (ws, req) => {
       }
     });
 
-    ws.on("close", () => {
-      clearInterval(keepaliveLogger);
-      const current = stealthConnections.get(deviceId);
-      // Удаляем только если текущее в stealthConnections — этот ws
-      if (current && current.ws === ws) {
-        stealthConnections.delete(deviceId);
-        deviceFileCache.delete(deviceId);
-        console.log(`❎ Device ${deviceId} disconnected`);
-      } else {
-        console.log(`❎ Device ${deviceId} closed (old connection)`);
-      }
-    });
+    ws.on("close", (code, reason) => {
+    clearInterval(keepaliveInterval);
+    stealthConnections.delete(deviceId);
+    deviceFileCache.delete(deviceId);
+    console.log(`❎ Device ${deviceId} disconnected — code: ${code}, reason: ${reason.toString()}`);
+  });
 
     ws.on("error", (err) => {
       clearInterval(keepaliveLogger);
@@ -602,3 +596,4 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
