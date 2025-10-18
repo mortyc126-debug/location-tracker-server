@@ -191,13 +191,6 @@ wss.on("connection", (ws, req) => {
       }
     });
 
-    ws.on("close", (code, reason) => {
-    clearInterval(keepaliveInterval);
-    stealthConnections.delete(deviceId);
-    deviceFileCache.delete(deviceId);
-    console.log(`❎ Device ${deviceId} disconnected — code: ${code}, reason: ${reason.toString()}`);
-  });
-
     ws.on("error", (err) => {
       clearInterval(keepaliveLogger);
       // При ошибке удаляем запись — т.к. ws скорее всего мёртв
@@ -596,4 +589,5 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
