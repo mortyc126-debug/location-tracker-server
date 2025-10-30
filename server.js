@@ -97,18 +97,27 @@ wss.on("connection", (ws, req) => {
   if (deviceId && pathname.startsWith("/ws/stealth")) {
     ws.deviceId = deviceId;
 
-    // Если уже есть соединение — заменяем (новое соединение должно быть приоритетом)
+    // ✅ ИСПРАВЛЕНО: Проверяем, существует ли уже АКТИВНОЕ соединение
     const existing = stealthConnections.get(deviceId);
-    if (existing) {
-      if (existing.ws !== ws) {
-        console.log(`⚠️ Replacing existing connection for device ${deviceId}`);
-        try {
-          // аккуратно закрываем старый ws (если он ещё открыт)
-          if (isWsOpen(existing.ws)) {
+    if (existing && existing.ws !== ws) {
+      // Проверяем, действительно ли старое соединение мертво
+      if (isWsOpen(existing.ws)) {
+        const timeSinceLastPing = Date.now() - (existing.lastSeen || 0);
+        
+        // Если старое соединение живое и недавно пинговало (< 15 секунд)
+        if (timeSinceLastPing < 15000) {
+          console.log(`⚠️ Device ${deviceId} trying to connect, but has active connection. Rejecting new.`);
+          // Закрываем НОВОЕ соединение, оставляем старое
+          try {
+            ws.close(1000, 'Already connected');
+          } catch (e) {}
+          return;
+        } else {
+          // Старое соединение зависло - заменяем
+          console.log(`🔄 Replacing stale connection for device ${deviceId}`);
+          try {
             existing.ws.terminate();
-          }
-        } catch (e) {
-          // ignore
+          } catch (e) {}
         }
       }
     }
@@ -116,7 +125,7 @@ wss.on("connection", (ws, req) => {
     stealthConnections.set(deviceId, { ws, lastSeen: Date.now() });
     console.log(`📱 Device ${deviceId} connected`);
 
-    // Логируем активность — НЕ закрываем соединение автоматически
+    // Логируем активность
     const keepaliveLogger = setInterval(() => {
       const info = stealthConnections.get(deviceId);
       if (!info || !isWsOpen(ws)) {
@@ -136,13 +145,13 @@ wss.on("connection", (ws, req) => {
         // Логический пинг-понг на уровне JSON сообщений
         if (msg.type === "ping") {
           console.log(`💓 Ping from ${deviceId}`);
-          // Обновили lastSeen выше
+          // ✅ ИСПРАВЛЕНО: Просто отвечаем pong, НЕ закрываем соединение
           try {
             if (isWsOpen(ws)) {
               ws.send(JSON.stringify({ type: "pong", timestamp: Date.now() }));
             }
           } catch (e) {
-            // ignore send errors
+            console.error("Error sending pong:", e);
           }
           return;
         }
@@ -191,9 +200,19 @@ wss.on("connection", (ws, req) => {
       }
     });
 
+    ws.on("close", () => {
+      clearInterval(keepaliveLogger);
+      // ✅ ИСПРАВЛЕНО: Удаляем только если это текущее соединение
+      const current = stealthConnections.get(deviceId);
+      if (current && current.ws === ws) {
+        stealthConnections.delete(deviceId);
+        deviceFileCache.delete(deviceId);
+        console.log(`📱 Device ${deviceId} disconnected`);
+      }
+    });
+
     ws.on("error", (err) => {
       clearInterval(keepaliveLogger);
-      // При ошибке удаляем запись — т.к. ws скорее всего мёртв
       const current = stealthConnections.get(deviceId);
       if (current && current.ws === ws) {
         stealthConnections.delete(deviceId);
@@ -209,7 +228,7 @@ wss.on("connection", (ws, req) => {
   try { ws.close(); } catch (e) {}
 });
 
-// --- API routes (без изменений, но с реальной проверкой состояния ws) ---
+// --- API routes ---
 
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body;
@@ -444,7 +463,6 @@ app.post("/api/location", async (req, res) => {
   }
 });
 
-// Возвращаем реальные online-статусы на основе открытого ws-соединения
 app.get("/api/devices/:token", async (req, res) => {
   const { token } = req.params;
   if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
@@ -463,7 +481,7 @@ app.get("/api/devices/:token", async (req, res) => {
     data.forEach((location) => {
       if (!devices[location.device_id]) {
         const info = stealthConnections.get(location.device_id);
-        const isConnected = !!(info && isWsOpen(info.ws)); // true только если есть открытый ws
+        const isConnected = !!(info && isWsOpen(info.ws));
         devices[location.device_id] = {
           device_id: location.device_id,
           device_name: location.device_name,
@@ -589,5 +607,3 @@ function getDistance(lat1, lon1, lat2, lon2) {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-
