@@ -1,6 +1,8 @@
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { createClient } from "@supabase/supabase-js";
 import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
@@ -31,8 +33,17 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 app.use(bodyParser.json({ limit: "50mb" }));
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { error: "Too many requests, please try again later" }
+});
+app.use("/api/", apiLimiter);
+
 app.use(express.static("public"));
 
 const wss = new WebSocketServer({ noServer: true });
@@ -555,47 +566,6 @@ app.post("/api/location", async (req, res) => {
   } catch (err) {
     console.error("Location save error:", err);
     return res.status(500).json({ error: "Server error" });
-  }
-});
-
-app.get("/api/devices/:token", async (req, res) => {
-  const { token } = req.params;
-  if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
-
-  try {
-    const { data, error } = await supabase
-      .from("locations")
-      .select("device_id, device_name, latitude, longitude, timestamp, battery, accuracy")
-      .order("timestamp", { ascending: false });
-
-    if (error) throw error;
-
-    const devices = {};
-    const now = Date.now();
-
-    data.forEach((location) => {
-      if (!devices[location.device_id]) {
-        const info = stealthConnections.get(location.device_id);
-        const isConnected = !!(info && isWsOpen(info.ws));
-        devices[location.device_id] = {
-          device_id: location.device_id,
-          device_name: location.device_name,
-          last_seen: location.timestamp,
-          battery: location.battery,
-          location_count: 0,
-          last_location: { lat: location.latitude, lng: location.longitude },
-          is_connected: isConnected
-        };
-        if (info && info.lastSeen) {
-          devices[location.device_id].server_lastSeen = info.lastSeen;
-        }
-      }
-      devices[location.device_id].location_count++;
-    });
-
-    return res.json(Object.values(devices));
-  } catch (err) {
-    return res.status(500).json({ error: "Database error" });
   }
 });
 

@@ -110,7 +110,8 @@ async function sendDeviceCommand(command) {
 
 // В JavaScript части замените функцию initLiveStreamConnection:
 function initLiveStreamConnection() {
-    const wsUrl = `wss://location-tracker-server-micv.onrender.com/ws/live`;
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.host}/ws/live`;
     liveStreamWebSocket = new WebSocket(wsUrl);
     
     liveStreamWebSocket.onopen = () => {
@@ -145,7 +146,6 @@ function initLiveStreamConnection() {
     liveStreamWebSocket.onerror = (error) => {
         console.error('WebSocket error:', error);
     };
-}
 }
 
 function displayLiveImage(base64Image) {
