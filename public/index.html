@@ -1262,15 +1262,19 @@
 
             filteredDevices.forEach((device) => {
                 const lastSeen = device.last_seen ? new Date(device.last_seen) : null;
-                const isOnline = lastSeen && (Date.now() - lastSeen.getTime() < 600000);
+                // Use server's is_connected (WebSocket status) as primary, fall back to timestamp check
+                const isOnline = device.is_connected || (lastSeen && (Date.now() - lastSeen.getTime() < 600000));
                 const lowBattery = (device.battery || 0) < 20;
-                
+
                 let statusClass = 'status-offline';
                 let statusText = 'OFFLINE';
-                
-                if (isOnline) {
+
+                if (device.is_connected) {
                     statusClass = lowBattery ? 'status-warning' : 'status-online';
-                    statusText = lowBattery ? 'LOW BATTERY' : 'ACTIVE';
+                    statusText = lowBattery ? 'LOW BATTERY' : 'ONLINE';
+                } else if (isOnline) {
+                    statusClass = 'status-warning';
+                    statusText = 'RECENT';
                 }
 
                 const deviceCard = document.createElement('div');
@@ -1283,7 +1287,7 @@
                 deviceCard.innerHTML = `
                     <div class="device-header">
                         <div class="device-info">
-                            <h3>${device.device_name || `Agent-${device.device_id.slice(0, 8)}`}</h3>
+                            <h3>${escapeHtml(device.device_name) || `Agent-${escapeHtml(device.device_id.slice(0, 8))}`}</h3>
                             <div class="device-status">
                                 <span class="status-indicator ${statusClass}"></span>
                                 <span>${statusText}</span>
@@ -1417,22 +1421,50 @@
                     }
                     
                     switch (data.type) {
+                        case 'location':
+                            // Real-time location update from device
+                            if (data.data && selectedDeviceId === data.deviceId) {
+                                const loc = data.data;
+                                const newPoint = {
+                                    latitude: loc.latitude,
+                                    longitude: loc.longitude,
+                                    accuracy: loc.accuracy,
+                                    battery: loc.battery,
+                                    timestamp: data.timestamp
+                                };
+                                selectedDeviceLocations.push(newPoint);
+                                renderRouteOnMap(selectedDeviceLocations);
+
+                                // Update battery display in device list
+                                const deviceInfo = devicesData.get(data.deviceId);
+                                if (deviceInfo) {
+                                    deviceInfo.battery = loc.battery;
+                                    deviceInfo.last_seen = data.timestamp;
+                                    deviceInfo.last_location = { lat: loc.latitude, lng: loc.longitude };
+                                }
+
+                                if (document.getElementById('autoCenter').checked) {
+                                    map.setView([loc.latitude, loc.longitude], map.getZoom());
+                                }
+                            }
+                            break;
+
                         case 'image':
                             displayLiveImage(data.data);
                             break;
-                            
+
                         case 'audio':
                             playAudioData(data.data);
                             break;
-                            
+
                         case 'file_download':
                             handleFileDownload(data);
                             break;
-                            
+
                         case 'file_list':
                             displayFileList(data.data);
                             break;
-                            
+
                         default:
                             console.log('Unknown message type:', data.type);
                     }
@@ -1771,21 +1803,21 @@
                 return;
             }
             
-            content.innerHTML = files.map(file => `
-                <div class="file-item" onclick="handleFileClick('${file.path}', '${file.name}', '${file.type}')" style="cursor: pointer;">
+            content.innerHTML = files.map((file, idx) => `
+                <div class="file-item" data-file-idx="${idx}" onclick="handleFileClick(this.dataset.fileIdx)" style="cursor: pointer;">
                     <div style="margin-right: 10px; font-size: 20px;">${getFileIcon(file.type)}</div>
                     <div style="flex: 1;">
-                        <div style="color: var(--text-primary); font-weight: 600;">${file.name}</div>
+                        <div style="color: var(--text-primary); font-weight: 600;">${escapeHtml(file.name)}</div>
                         <div style="color: var(--text-muted); font-size: 11px;">
-                            ${file.size} • ${file.date}
+                            ${escapeHtml(file.size)} • ${escapeHtml(file.date)}
                         </div>
                         <div style="color: var(--text-secondary); font-size: 10px; margin-top: 2px;">
-                            ${file.path}
+                            ${escapeHtml(file.path)}
                         </div>
                     </div>
                     <div style="display: flex; gap: 5px;">
-                        <button class="icon-btn" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇</button>
-                        <button class="icon-btn" onclick="event.stopPropagation(); previewFile('${file.path}', '${file.name}', '${file.type}')" title="Preview">👁</button>
+                        <button class="icon-btn" data-file-idx="${idx}" onclick="event.stopPropagation(); var f=window.fileCategories['${category}'][this.dataset.fileIdx]; downloadFile(f.path, f.name)" title="Download">⬇</button>
+                        <button class="icon-btn" data-file-idx="${idx}" onclick="event.stopPropagation(); var f=window.fileCategories['${category}'][this.dataset.fileIdx]; previewFile(f.path, f.name, f.type)" title="Preview">👁</button>
                     </div>
                 </div>
             `).join('');
@@ -1801,8 +1833,13 @@
             return icons[type] || '📁';
         }
 
-        function handleFileClick(filePath, fileName, fileType) {
-            previewFile(filePath, fileName, fileType);
+        function handleFileClick(idx) {
+            const activeCategory = document.querySelector('[id^="tab-"][style*="gold"]');
+            const categoryName = activeCategory ? activeCategory.id.replace('tab-', '') : 'images';
+            const file = window.fileCategories[categoryName][idx];
+            if (file) {
+                previewFile(file.path, file.name, file.type);
+            }
         }
 
         async function downloadFile(filePath, fileName) {
@@ -2666,6 +2703,16 @@
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
             
             return R * c;
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         function formatDateTime(date) {

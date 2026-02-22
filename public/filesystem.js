@@ -331,20 +331,6 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Обновите обработчик WebSocket сообщений для включения файловых команд
-// В функции initLiveStreamConnection добавьте:
-liveStreamWebSocket.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    
-    if (data.type === 'image' || data.type === 'audio') {
-        // Существующая логика для медиа
-        if (data.type === 'image') {
-            displayLiveImage(data.data);
-        } else if (data.type === 'audio') {
-            playAudioData(data.data);
-        }
-    } else {
-        // Новая логика для файловой системы
-        handleFileSystemMessage(data);
-    }
-};
+// NOTE: WebSocket message handling for file system is integrated
+// into the main WebSocket handler in index.html.
+// Use handleFileSystemMessage(data) to process file system responses.
