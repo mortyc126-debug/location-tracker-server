@@ -1,0 +1,141 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.util.Log;
+
+import org.json.JSONObject;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
+
+import okhttp3.MediaType;
+import org.json.JSONArray;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.logging.HttpLoggingInterceptor;
+
+public class NetworkClient {
+    private static final String TAG = "NetworkClient";
+    private static final String ENDPOINT = "https://location-tracker-server-micv.onrender.com/api/location";
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+    private static final int MAX_RETRY_ATTEMPTS = 3;
+
+    private final OkHttpClient client;
+    private final SecurePreferences securePrefs;
+
+    public NetworkClient(Context context) {
+        this.securePrefs = new SecurePreferences(context);
+
+        OkHttpClient.Builder builder = new OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .writeTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true);
+
+        HttpLoggingInterceptor logger = new HttpLoggingInterceptor(message -> Log.d(TAG, message));
+        logger.setLevel(HttpLoggingInterceptor.Level.BODY);
+        builder.addInterceptor(logger);
+
+        this.client = builder.build();
+    }
+
+    public boolean sendLocation(LocationService.LocationData data, String deviceId, String deviceName) {
+        return sendLocationWithRetry(data, deviceId, deviceName, MAX_RETRY_ATTEMPTS);
+    }
+
+    private boolean sendLocationWithRetry(LocationService.LocationData data, String deviceId, String deviceName, int maxRetries) {
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            if (sendLocationAttempt(data, deviceId, deviceName)) {
+                if (attempt > 1) {
+                    Log.d(TAG, "Location sent successfully on attempt " + attempt);
+                }
+                return true;
+            }
+            if (attempt < maxRetries) {
+                try {
+                    long delay = Math.min(2000L * attempt, 15000L);
+                    Log.d(TAG, "Retrying in " + delay + "ms (attempt " + (attempt + 1) + "/" + maxRetries + ")");
+                    Thread.sleep(delay);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    Log.w(TAG, "Retry interrupted");
+                    return false;
+                }
+            }
+        }
+        Log.w(TAG, "Failed to send location after " + maxRetries + " attempts");
+        return false;
+    }
+
+    private boolean sendLocationAttempt(LocationService.LocationData data, String deviceId, String deviceName) {
+        if (deviceId == null || deviceId.isEmpty()) {
+            Log.e(TAG, "deviceId is null/empty");
+            return false;
+        }
+
+        Log.d(TAG, "Sending location: lat=" + data.latitude + ", lon=" + data.longitude +
+                ", device=" + deviceId + ", name=" + deviceName);
+
+        Response resp = null;
+        try {
+            JSONObject json = new JSONObject();
+            json.put("device_id", deviceId);
+            json.put("device_name", deviceName);
+            json.put("latitude", data.latitude);
+            json.put("longitude", data.longitude);
+            json.put("timestamp", data.timestamp);
+
+            if (data.accuracy > 0) json.put("accuracy", data.accuracy);
+            if (data.batteryLevel >= 0) json.put("battery", data.batteryLevel);
+            if (data.wifiInfo != null && !data.wifiInfo.isEmpty()) {
+                try {
+                    JSONArray wifiArray = new JSONArray(data.wifiInfo);
+                    json.put("wifi_info", wifiArray);
+                } catch (Exception e) {
+                    Log.e(TAG, "Invalid wifiInfo JSON", e);
+                }
+            }
+
+            String bodyStr = json.toString();
+            Log.d(TAG, "Request body: " + bodyStr);
+
+            RequestBody body = RequestBody.create(bodyStr.getBytes(StandardCharsets.UTF_8), JSON);
+
+            Request request = new Request.Builder()
+                    .url(ENDPOINT)
+                    .post(body)
+                    .addHeader("Content-Type", "application/json; charset=utf-8")
+                    .addHeader("User-Agent", "LocationTracker/1.0")
+                    .addHeader("Authorization", getSimpleAuthToken()) // токен без Bearer
+                    .build();
+
+            resp = client.newCall(request).execute();
+            int code = resp.code();
+            String responseBody = resp.body() != null ? resp.body().string() : "";
+
+            Log.d(TAG, "Response code: " + code);
+            Log.d(TAG, "Response body: " + responseBody);
+
+            return code >= 200 && code < 300;
+
+        } catch (IOException e) {
+            Log.e(TAG, "Network error sending location", e);
+            return false;
+        } catch (Exception e) {
+            Log.e(TAG, "Unexpected error sending location", e);
+            return false;
+        } finally {
+            if (resp != null) {
+                try { resp.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    // Простой токен, совпадающий с SECRET_TOKEN на сервере
+    private String getSimpleAuthToken() {
+        return "your_secret_key_123"; // <-- заменить на реальный ключ
+    }
+}

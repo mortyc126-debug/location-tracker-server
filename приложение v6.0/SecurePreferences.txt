@@ -1,0 +1,100 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.util.Log;
+import androidx.security.crypto.EncryptedSharedPreferences;
+import androidx.security.crypto.MasterKeys;
+
+public class SecurePreferences {
+    private static final String TAG = "SecurePreferences";
+    private static final String PREFS_NAME = "secure_location_prefs";
+    private static final String PENDING_PREFS_NAME = "secure_pending_prefs";
+    private static final String FALLBACK_PREFS_NAME = "fallback_location_prefs";
+    private static final String FALLBACK_PENDING_PREFS_NAME = "fallback_pending_prefs";
+
+    private SharedPreferences securePrefs;
+    private SharedPreferences securePendingPrefs;
+    private boolean isUsingFallback = false;
+
+    public SecurePreferences(Context context) {
+        // В release версии всегда используем fallback для стабильности
+        this(context, true);
+    }
+
+    public SecurePreferences(Context context, boolean debugMode) {
+        if (debugMode || BuildConfig.DEBUG) {
+            // В debug режиме используем обычные SharedPreferences
+            initializeFallback(context);
+        } else {
+            // В release пытаемся использовать encrypted
+            try {
+                initializeEncrypted(context);
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to create encrypted preferences, using fallback", e);
+                initializeFallback(context);
+            }
+        }
+    }
+
+    private void initializeEncrypted(Context context) throws Exception {
+        String masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC);
+
+        securePrefs = EncryptedSharedPreferences.create(
+                PREFS_NAME,
+                masterKeyAlias,
+                context,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        );
+
+        securePendingPrefs = EncryptedSharedPreferences.create(
+                PENDING_PREFS_NAME,
+                masterKeyAlias,
+                context,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        );
+
+        isUsingFallback = false;
+        Log.d(TAG, "Encrypted preferences initialized successfully");
+    }
+
+    private void initializeFallback(Context context) {
+        securePrefs = context.getSharedPreferences(FALLBACK_PREFS_NAME, Context.MODE_PRIVATE);
+        securePendingPrefs = context.getSharedPreferences(FALLBACK_PENDING_PREFS_NAME, Context.MODE_PRIVATE);
+        isUsingFallback = true;
+        Log.w(TAG, "Using fallback unencrypted preferences");
+    }
+
+    public SharedPreferences getMainPrefs() {
+        return securePrefs;
+    }
+
+    public SharedPreferences getPendingPrefs() {
+        return securePendingPrefs;
+    }
+
+    public String getDeviceName() {
+        return securePrefs.getString("device_name", "Unknown_Device");
+    }
+
+    public void setDeviceInfo(String deviceId, String deviceName) {
+        securePrefs.edit()
+                .putString("device_id", deviceId)
+                .putString("device_name", deviceName)
+                .apply();
+    }
+
+    public boolean isTrackingEnabled() {
+        return securePrefs.getBoolean("auto_tracking", false);
+    }
+
+    public void setTrackingEnabled(boolean enabled) {
+        securePrefs.edit().putBoolean("auto_tracking", enabled).apply();
+    }
+
+    public boolean isUsingFallback() {
+        return isUsingFallback;
+    }
+}

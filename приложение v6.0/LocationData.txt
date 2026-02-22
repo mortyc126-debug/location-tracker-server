@@ -1,0 +1,13 @@
+package com.example.locationtracker;
+
+public class LocationData {
+    public double latitude;
+    public double longitude;
+    public float accuracy;
+
+    public LocationData(double latitude, double longitude, float accuracy) {
+        this.latitude = latitude;
+        this.longitude = longitude;
+        this.accuracy = accuracy;
+    }
+}

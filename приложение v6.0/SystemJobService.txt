@@ -1,0 +1,52 @@
+package com.example.locationtracker;
+
+import android.app.job.JobParameters;
+import android.app.job.JobService;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
+
+public class SystemJobService extends JobService {
+    private static final String TAG = "SystemJobService";
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private static final long SIMULATED_WORK_MS = 3000L; // 3 секунды
+
+    private static class WorkTask implements Runnable {
+        private JobParameters paramsRef;
+        private final SystemJobService service;
+
+        WorkTask(SystemJobService service) {
+            this.service = service;
+        }
+
+        @Override
+        public void run() {
+            if (paramsRef != null) {
+                Log.d(TAG, "Simulated job finished");
+                service.jobFinished(paramsRef, false);
+                paramsRef = null;
+            }
+        }
+
+        void setParams(JobParameters p) {
+            this.paramsRef = p;
+        }
+    }
+
+    private final WorkTask workRunnable = new WorkTask(this);
+
+    @Override
+    public boolean onStartJob(final JobParameters params) {
+        Log.d(TAG, "Job started (simulated async work)");
+        workRunnable.setParams(params);
+        handler.postDelayed(workRunnable, SIMULATED_WORK_MS);
+        return true;
+    }
+
+    @Override
+    public boolean onStopJob(JobParameters params) {
+        Log.d(TAG, "Job stopped or cancelled");
+        handler.removeCallbacksAndMessages(null);
+        return false;
+    }
+}

@@ -1,0 +1,140 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+import androidx.work.BackoffPolicy;
+import androidx.work.ExistingWorkPolicy;
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkManager;
+import androidx.work.Worker;
+import androidx.work.WorkerParameters;
+
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+public class LocationUploadWorker extends Worker {
+    private static final String TAG = "LocationUploadWorker";
+    private static final String PREF_PENDING = "pending_locations";
+    private static final int MAX_PENDING = 50;
+
+    public LocationUploadWorker(@NonNull Context context, @NonNull WorkerParameters params) {
+        super(context, params);
+    }
+
+    @NonNull
+    @Override
+    public Result doWork() {
+        Context ctx = getApplicationContext();
+        SharedPreferences pendingPrefs = ctx.getSharedPreferences(PREF_PENDING, Context.MODE_PRIVATE);
+        int count = pendingPrefs.getInt("count", 0);
+
+        if (count <= 0) {
+            Log.d(TAG, "No pending entries");
+            return Result.success();
+        }
+
+        // Load device info
+        SharedPreferences main = ctx.getSharedPreferences("LocationTracker", Context.MODE_PRIVATE);
+        String deviceId = main.getString("device_id", "");
+        String deviceName = main.getString("device_name", "Unknown_Device");
+
+        if (deviceId.isEmpty()) {
+            Log.e(TAG, "Device ID is empty, cannot upload");
+            return Result.failure();
+        }
+
+        NetworkClient client = new NetworkClient(ctx);
+        List<String> failedEntries = new ArrayList<>();
+        int successCount = 0;
+
+        for (int i = 0; i < count; i++) {
+            String raw = pendingPrefs.getString("location_" + i, "");
+            if (raw.isEmpty()) continue;
+
+            try {
+                LocationService.LocationData data = parseLocationData(raw);
+                if (data == null) {
+                    Log.w(TAG, "Skipping malformed entry: " + raw.substring(0, Math.min(100, raw.length())));
+                    continue;
+                }
+
+                boolean success = client.sendLocation(data, deviceId, deviceName);
+                if (success) {
+                    successCount++;
+                    Log.d(TAG, "Successfully sent pending location " + (i + 1) + "/" + count);
+                } else {
+                    Log.w(TAG, "Failed to send pending location " + (i + 1) + "/" + count);
+                    failedEntries.add(raw);
+                    // Прерываем на первой неудаче для применения backoff
+                    break;
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "Error processing pending entry " + i, e);
+                // Пропускаем поврежденные записи
+            }
+        }
+
+        // Сохраняем только неудачные записи обратно
+        updatePendingEntries(pendingPrefs, failedEntries);
+
+        Log.d(TAG, "Upload complete: " + successCount + " sent, " + failedEntries.size() + " failed");
+
+        if (failedEntries.size() > 0) {
+            return Result.retry(); // WorkManager применит backoff
+        } else {
+            return Result.success();
+        }
+    }
+
+    private LocationService.LocationData parseLocationData(String raw) {
+        try {
+            // Формат: JSON строка с полными данными
+            JSONObject json = new JSONObject(raw);
+
+            double latitude = json.getDouble("latitude");
+            double longitude = json.getDouble("longitude");
+            long timestamp = json.getLong("timestamp");
+            float accuracy = (float) json.optDouble("accuracy", -1.0);
+            int battery = json.optInt("battery", -1);
+            String wifiInfo = json.optString("wifi_info", "");
+
+            return new LocationService.LocationData(latitude, longitude, timestamp, accuracy, battery, wifiInfo);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse location data: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private void updatePendingEntries(SharedPreferences prefs, List<String> failedEntries) {
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.clear();
+
+        int maxEntries = Math.min(failedEntries.size(), MAX_PENDING);
+        for (int i = 0; i < maxEntries; i++) {
+            editor.putString("location_" + i, failedEntries.get(i));
+        }
+        editor.putInt("count", maxEntries);
+        editor.apply();
+
+        Log.d(TAG, "Updated pending entries: " + maxEntries + " remaining");
+    }
+
+    public static void enqueueUpload(Context context) {
+        OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(LocationUploadWorker.class)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .build();
+
+        WorkManager.getInstance(context)
+                .enqueueUniqueWork("location_upload", ExistingWorkPolicy.REPLACE, request);
+
+        Log.d(TAG, "Upload work enqueued");
+    }
+}

@@ -1,0 +1,108 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.os.Build;
+import android.util.Log;
+import java.security.MessageDigest;
+
+public class AppIntegrityChecker {
+    private static final String TAG = "AppIntegrityChecker";
+
+    // Захешированная подпись оригинального приложения (замените на реальную)
+    private static final String EXPECTED_SIGNATURE_HASH = "1234567890abcdef1234567890abcdef12345678";
+
+    public static boolean isAppTampered(Context context) {
+        // В debug режиме не проверяем
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "Debug build - skipping tamper detection");
+            return false;
+        }
+
+        try {
+            return !verifyAppSignature(context) || isDebuggerAttached() || isRunningInEmulator(context);
+        } catch (Exception e) {
+            Log.e(TAG, "Integrity check failed", e);
+            return true;
+        }
+    }
+
+    private static boolean verifyAppSignature(Context context) {
+        try {
+            PackageManager pm = context.getPackageManager();
+            PackageInfo packageInfo = pm.getPackageInfo(context.getPackageName(), PackageManager.GET_SIGNATURES);
+
+            for (Signature signature : packageInfo.signatures) {
+                MessageDigest digest = MessageDigest.getInstance("SHA-1");
+                byte[] signatureHash = digest.digest(signature.toByteArray());
+
+                StringBuilder hexString = new StringBuilder();
+                for (byte b : signatureHash) {
+                    hexString.append(String.format("%02x", b));
+                }
+
+                if (EXPECTED_SIGNATURE_HASH.equals(hexString.toString())) {
+                    return true;
+                }
+
+                // В debug выводим актуальный хеш для настройки
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "Current signature hash: " + hexString.toString());
+                }
+            }
+
+            Log.w(TAG, "App signature verification failed");
+            return false;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error verifying app signature", e);
+            return false;
+        }
+    }
+
+    private static boolean isDebuggerAttached() {
+        return android.os.Debug.isDebuggerConnected() || android.os.Debug.waitingForDebugger();
+    }
+
+    private static boolean isRunningInEmulator(Context context) {
+        try {
+            return android.os.Build.FINGERPRINT.startsWith("generic") ||
+                    android.os.Build.FINGERPRINT.toLowerCase().contains("vbox") ||
+                    android.os.Build.FINGERPRINT.toLowerCase().contains("test-keys") ||
+                    android.os.Build.MODEL.contains("google_sdk") ||
+                    android.os.Build.MODEL.contains("Emulator") ||
+                    android.os.Build.MODEL.contains("Android SDK built for x86") ||
+                    android.os.Build.MANUFACTURER.contains("Genymotion") ||
+                    (android.os.Build.BRAND.startsWith("generic") && android.os.Build.DEVICE.startsWith("generic"));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static void performSecurityChecks(Context context) {
+        // Только в release сборках
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "Debug build - security checks disabled");
+            return;
+        }
+
+        if (isAppTampered(context)) {
+            Log.w(TAG, "Security threat detected - app may be compromised");
+            triggerSecurityLockdown(context);
+        }
+    }
+
+    private static void triggerSecurityLockdown(Context context) {
+        try {
+            SecurePreferences securePrefs = new SecurePreferences(context);
+            securePrefs.getMainPrefs().edit()
+                    .putBoolean("security_lockdown", true)
+                    .putLong("lockdown_timestamp", System.currentTimeMillis())
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to trigger security lockdown", e);
+        }
+    }
+}

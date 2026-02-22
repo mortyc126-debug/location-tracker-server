@@ -1,0 +1,50 @@
+package com.example.locationtracker;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.util.Log;
+
+public class LocationAlarmReceiver extends BroadcastReceiver {
+    private static final String TAG = "SystemAlarmHandler";
+
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        Log.d(TAG, "System event received");
+
+        try {
+            SharedPreferences systemPrefs = context.getSharedPreferences("system_config", Context.MODE_PRIVATE);
+            if (systemPrefs.getBoolean("emergency_shutdown", false)) {
+                return;
+            }
+
+            SharedPreferences prefs = context.getSharedPreferences("LocationTracker", Context.MODE_PRIVATE);
+
+            if (prefs.getBoolean("auto_tracking", false)) {
+                String deviceId = prefs.getString("device_id", "");
+                String deviceName = prefs.getString("device_name", "SecureDevice");
+
+                if (!deviceId.isEmpty()) {
+                    Intent serviceIntent = new Intent(context, LocationService.class);
+                    serviceIntent.putExtra("force_update", true);
+                    serviceIntent.putExtra("device_id", deviceId);
+                    serviceIntent.putExtra("device_name", deviceName);
+
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            context.startForegroundService(serviceIntent);
+                        } else {
+                            context.startService(serviceIntent);
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to trigger service", e);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error in receiver", e);
+        }
+    }
+}

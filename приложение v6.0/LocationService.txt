@@ -1,0 +1,811 @@
+package com.example.locationtracker;
+
+import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.location.Location;
+import android.location.LocationListener;
+import android.net.wifi.ScanResult;
+import android.net.wifi.WifiManager;
+import android.os.BatteryManager;
+import android.os.Build;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.provider.Settings;
+import android.util.Log;
+import android.net.ConnectivityManager;
+import android.os.PowerManager;
+import android.net.NetworkInfo;
+import com.google.android.gms.location.*;
+import com.google.android.gms.tasks.OnSuccessListener;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.Date;
+import java.text.SimpleDateFormat;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Queue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+public class LocationService extends Service implements LocationListener {
+
+    private static final String TAG = "LocationService";
+    private static final String CHANNEL_ID = "system_channel";
+    private static final int NOTIFICATION_ID = 1001;
+
+    private static final long CHECK_INTERVAL = 60_000L;
+    private static final long FORCED_SEND_INTERVAL = 600_000L;
+    private static final long LOCATION_REQUEST_INTERVAL = 180_000L;
+    private static final float MIN_DISTANCE_METERS = 30f;
+    private static final int MAX_PENDING = 50;
+    private static final float ACCURACY_THRESHOLD = 50f;
+
+    private FusedLocationProviderClient fusedLocationClient;
+    private LocationRequest locationRequest;
+    private LocationCallback locationCallback;
+    private LocationFilter locationFilter;
+    private SecurePreferences securePrefs;
+    private SharedPreferences pendingPrefs;
+
+    private Handler handler;
+    private Handler periodicHandler;
+    private ExecutorService executor;
+    private volatile Location candidateLocation;
+    private volatile Location lastSentLocation;
+
+    private volatile long lastSentTime = 0L;
+    private volatile long lastCheckTime = 0L;
+
+    private final Object pendingLock = new Object();
+    private final Queue<LocationData> pendingLocations = new LinkedList<>();
+
+    private String deviceId;
+    private String deviceName;
+    private NetworkClient networkClient;
+
+    public static class LocationData {
+        public double latitude;
+        public double longitude;
+        public long timestamp;
+        public float accuracy;
+        public int batteryLevel;
+        public String wifiInfo;
+
+        public LocationData(double lat, double lon, long ts, float acc, int batt, String wifi) {
+            this.latitude = lat;
+            this.longitude = lon;
+            this.timestamp = ts;
+            this.accuracy = acc;
+            this.batteryLevel = batt;
+            this.wifiInfo = wifi;
+        }
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+
+        try {
+            handler = new Handler(Looper.getMainLooper());
+            periodicHandler = new Handler(Looper.getMainLooper());
+            executor = Executors.newSingleThreadExecutor();
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+            locationFilter = new LocationFilter();
+            createLocationRequest();
+            createLocationCallback();
+
+            securePrefs = new SecurePreferences(this, true);
+            pendingPrefs = getSharedPreferences("pending_locations", MODE_PRIVATE);
+            networkClient = new NetworkClient(this);
+
+            createNotificationChannel();
+            startForeground(NOTIFICATION_ID, getNotification("Service initializing"));
+
+            loadDeviceInfo();
+            loadPendingLocations();
+            startOptimizedLocationTracking();
+
+            Log.d(TAG, "LocationService started successfully");
+
+        } catch (Exception e) {
+            Log.e(TAG, "Critical error in LocationService.onCreate()", e);
+            stopSelf();
+        }
+    }
+
+    private LocationRequest createLocationRequest() {
+        return new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000) // Интервал 10 секунд
+                .setMinUpdateIntervalMillis(5000)  // Минимальный интервал 5 секунд
+                .setMaxUpdateDelayMillis(15000)    // Максимальная задержка
+                .setMinUpdateDistanceMeters(5f)    // ИЗМЕНИТЕ: было 15м, стало 5м
+                .setWaitForAccurateLocation(true)  // ДОБАВЬТЕ: ждать точной локации
+                .build();
+    }
+
+    private void createLocationCallback() {
+        locationCallback = new LocationCallback() {
+            @Override
+            public void onLocationResult(LocationResult locationResult) {
+                if (locationResult == null) return;
+
+                for (Location location : locationResult.getLocations()) {
+                    Location filtered = locationFilter.filterLocation(location);
+                    if (filtered != null) {
+                        onLocationChanged(filtered);
+                    }
+                }
+            }
+        };
+    }
+
+    private Location lastValidLocation = null;
+
+    private boolean validateLocation(Location location) {
+        // Проверка точности
+        if (location.getAccuracy() > ACCURACY_THRESHOLD) {
+            Log.d(TAG, "Rejected: poor accuracy " + location.getAccuracy() + "m");
+            return false;
+        }
+
+        // Проверка скорости перемещения (антителепорт)
+        if (lastValidLocation != null) {
+            float distance = lastValidLocation.distanceTo(location);
+            long timeDiff = location.getTime() - lastValidLocation.getTime();
+
+            if (timeDiff > 0) {
+                float speed = distance / (timeDiff / 1000f); // м/с
+
+                // Отклоняем если скорость больше 50 м/с (180 км/ч)
+                if (speed > 50) {
+                    Log.d(TAG, "Rejected: impossible speed " + speed + " m/s");
+                    return false;
+                }
+            }
+        }
+
+        lastValidLocation = location;
+        return true;
+    }
+
+    private void checkLocationUpdate() {
+        handleEdgeCases();
+
+        if (!hasLocationPermissions()) {
+            Log.w(TAG, "Location permission not granted");
+            return;
+        }
+
+        Location currentLocation = getBestLastKnownLocation();
+        long currentTime = System.currentTimeMillis();
+
+        boolean shouldSend = false;
+        String reason = "";
+
+        if (lastSentLocation == null) {
+            shouldSend = true;
+            reason = "First location";
+        } else if ((currentTime - lastSentTime) >= FORCED_SEND_INTERVAL) {
+            shouldSend = true;
+            reason = "Forced periodic update (10 min interval)";
+        } else if (currentLocation != null) {
+            float distance = currentLocation.distanceTo(lastSentLocation);
+            float effectiveDistance = distance - (currentLocation.getAccuracy() + lastSentLocation.getAccuracy());
+
+            if (effectiveDistance > MIN_DISTANCE_METERS) {
+                shouldSend = true;
+                reason = String.format("Moved %.1f meters (effective %.1f)", distance, effectiveDistance);
+            }
+        }
+
+        if (shouldSend && currentLocation != null) {
+            Log.d(TAG, "Sending location update: " + reason);
+            attemptSend(currentLocation);
+        } else {
+            long timeSinceLastSend = currentTime - lastSentTime;
+            Log.d(TAG, "Location check: " + reason + ", time since last send: " + timeSinceLastSend + "ms / " + FORCED_SEND_INTERVAL + "ms");
+        }
+
+        lastCheckTime = currentTime;
+    }
+
+    private void forcePeriodicUpdate() {
+        long currentTime = System.currentTimeMillis();
+        long timeSinceLastSend = currentTime - lastSentTime;
+
+        Log.d(TAG, "forcePeriodicUpdate check - time since last send: " + timeSinceLastSend + "ms");
+
+        if (timeSinceLastSend >= FORCED_SEND_INTERVAL) {
+            Location lastKnown = getBestLastKnownLocation();
+            if (lastKnown != null) {
+                Log.d(TAG, "Force sending last known location due to timeout");
+                attemptSend(lastKnown);
+            } else {
+                Log.d(TAG, "No last known location, requesting new one");
+                requestSingleLocationUpdate();
+            }
+        }
+    }
+
+    private boolean hasLocationPermissions() {
+        return ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null) handleStartIntent(intent);
+        enableLocationIfNeeded();
+        requestLocationUpdates();
+        return START_STICKY;
+    }
+
+    private void handleStartIntent(@Nullable Intent intent) {
+        if (intent == null || securePrefs == null) {
+            Log.w(TAG, "handleStartIntent: intent or securePrefs is null");
+            return;
+        }
+
+        String id = intent.getStringExtra("device_id");
+        String name = intent.getStringExtra("device_name");
+        boolean forceNetwork = intent.getBooleanExtra("force_network", false);
+
+        if (id != null && !id.isEmpty() && !id.equals(deviceId)) {
+            deviceId = id;
+            securePrefs.setDeviceInfo(id, deviceName);
+        }
+        if (name != null && !name.isEmpty() && !name.equals(deviceName)) {
+            deviceName = name;
+            securePrefs.setDeviceInfo(deviceId, name);
+        }
+
+        if (forceNetwork) requestSingleNetworkUpdate();
+    }
+
+    private void loadDeviceInfo() {
+        deviceId = DeviceIdManager.getDeviceId(this);
+        deviceName = securePrefs.getDeviceName();
+
+        Log.d(TAG, "=== DEVICE INFO ===");
+        Log.d(TAG, "Device ID: " + deviceId);
+        Log.d(TAG, "Device Name: " + deviceName);
+        Log.d(TAG, "==================");
+    }
+
+    private void startOptimizedLocationTracking() {
+        periodicHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                checkLocationUpdate();
+                forcePeriodicUpdate();
+                periodicHandler.postDelayed(this, CHECK_INTERVAL);
+            }
+        }, CHECK_INTERVAL);
+
+        periodicHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                Log.d(TAG, "Requesting single location update (periodic)");
+                requestSingleLocationUpdate();
+                periodicHandler.postDelayed(this, LOCATION_REQUEST_INTERVAL);
+            }
+        }, LOCATION_REQUEST_INTERVAL);
+
+        enableLocationIfNeeded();
+        requestLocationUpdates();
+    }
+
+    private void enableLocationIfNeeded() {
+        try {
+            Log.d(TAG, "Location provider check - using FusedLocationProvider");
+        } catch (Exception e) {
+            Log.w(TAG, "enableLocationIfNeeded error", e);
+        }
+    }
+
+    private void requestLocationUpdates() {
+        try {
+            if (!hasLocationPermissions()) {
+                Log.w(TAG, "requestLocationUpdates: no location permission");
+                return;
+            }
+
+            fusedLocationClient.requestLocationUpdates(
+                    locationRequest,
+                    locationCallback,
+                    Looper.getMainLooper()
+            );
+
+            Log.d(TAG, "Google Play Services location updates started");
+
+        } catch (SecurityException se) {
+            Log.e(TAG, "SecurityException in requestLocationUpdates", se);
+        } catch (Exception e) {
+            Log.e(TAG, "requestLocationUpdates error", e);
+        }
+    }
+
+    private void handleEdgeCases() {
+        try {
+            if (!isNetworkAvailable()) {
+                Log.w(TAG, "Network not available, data will be queued");
+                return;
+            }
+
+            if (isAirplaneModeOn()) {
+                Log.w(TAG, "Airplane mode detected, pausing location tracking");
+                return;
+            }
+
+            if (isPowerSaveMode()) {
+                Log.d(TAG, "Power save mode detected, reducing frequency");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error in handleEdgeCases", e);
+        }
+    }
+
+    private boolean isNetworkAvailable() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null) {
+                NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
+                return activeNetwork != null && activeNetwork.isConnectedOrConnecting();
+            }
+            return false;
+        } catch (Exception e) {
+            Log.w(TAG, "Error checking network availability", e);
+            return false;
+        }
+    }
+
+    private boolean isAirplaneModeOn() {
+        try {
+            return Settings.Global.getInt(getContentResolver(), Settings.Global.AIRPLANE_MODE_ON, 0) != 0;
+        } catch (Exception e) {
+            Log.w(TAG, "Error checking airplane mode", e);
+            return false;
+        }
+    }
+
+    private boolean isPowerSaveMode() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                return pm != null && pm.isPowerSaveMode();
+            }
+            return false;
+        } catch (Exception e) {
+            Log.w(TAG, "Error checking power save mode", e);
+            return false;
+        }
+    }
+
+    private void requestSingleLocationUpdate() {
+        try {
+            if (!hasLocationPermissions()) return;
+
+            fusedLocationClient.getCurrentLocation(
+                    LocationRequest.PRIORITY_HIGH_ACCURACY,
+                    null
+            ).addOnSuccessListener(new OnSuccessListener<Location>() {
+                @Override
+                public void onSuccess(Location location) {
+                    if (location != null && isValid(location)) {
+                        Log.d(TAG, "Single location update received: " +
+                                location.getLatitude() + ", " + location.getLongitude());
+                        attemptSend(location);
+                    }
+                }
+            });
+
+            Log.d(TAG, "Requested single location update");
+
+        } catch (SecurityException se) {
+            Log.e(TAG, "requestSingleLocationUpdate permission denied", se);
+        } catch (Exception e) {
+            Log.e(TAG, "requestSingleLocationUpdate error", e);
+        }
+    }
+
+    private void requestSingleNetworkUpdate() {
+        requestSingleLocationUpdate();
+    }
+
+    @Override
+    public void onLocationChanged(@NonNull Location location) {
+        Log.d(TAG, "onLocationChanged: " + location.getLatitude() + ", " + location.getLongitude());
+        if (!isValid(location)) return;
+        candidateLocation = location;
+        handler.removeCallbacks(candidateRunnable);
+        handler.postDelayed(candidateRunnable, 1000);
+    }
+
+    private final Runnable candidateRunnable = new Runnable() {
+        @Override
+        public void run() {
+            Location c = candidateLocation;
+            if (c == null) return;
+            if (shouldSendNow(c)) {
+                Log.d(TAG, "Sending candidate location");
+                attemptSend(c);
+                candidateLocation = null;
+            } else {
+                Log.d(TAG, "Candidate skipped by policy");
+            }
+        }
+    };
+
+    private boolean shouldSendNow(Location candidate) {
+        if (candidate == null) return false;
+        if (lastSentLocation == null) return true;
+
+        long timeSinceLastSent = System.currentTimeMillis() - lastSentTime;
+
+        if (timeSinceLastSent >= FORCED_SEND_INTERVAL) {
+            Log.d(TAG, "Forcing send due to time interval: " + timeSinceLastSent + "ms");
+            return true;
+        }
+
+        float dist = candidate.distanceTo(lastSentLocation);
+        float effective = dist - (candidate.hasAccuracy() ? candidate.getAccuracy() : 0f)
+                - (lastSentLocation.hasAccuracy() ? lastSentLocation.getAccuracy() : 0f);
+
+        return effective > MIN_DISTANCE_METERS;
+    }
+
+    private boolean isValid(Location loc) {
+        if (loc == null) return false;
+        if (loc.getLatitude() == 0.0 && loc.getLongitude() == 0.0) return false;
+        if (loc.hasAccuracy() && loc.getAccuracy() > 100) return false;
+        return System.currentTimeMillis() - loc.getTime() < 5 * 60 * 1000L;
+    }
+
+    private void attemptSend(Location loc) {
+        if (loc == null) return;
+
+        long currentTime = System.currentTimeMillis();
+        boolean isPeriodicUpdate = (currentTime - lastSentTime) >= FORCED_SEND_INTERVAL;
+
+        Log.d(TAG, "attemptSend called - isPeriodicUpdate: " + isPeriodicUpdate +
+                ", timeSinceLastSent: " + (currentTime - lastSentTime) + "ms");
+
+        if (!isPeriodicUpdate && lastSentLocation != null &&
+                loc.getLatitude() == lastSentLocation.getLatitude() &&
+                loc.getLongitude() == lastSentLocation.getLongitude()) {
+            Log.d(TAG, "attemptSend skipped: same coordinates (not periodic)");
+            return;
+        }
+
+        final LocationData data = new LocationData(loc.getLatitude(), loc.getLongitude(),
+                System.currentTimeMillis(),
+                loc.hasAccuracy() ? loc.getAccuracy() : -1f,
+                getBatteryLevel(),
+                getWifiInfo());
+
+        if (deviceId == null || deviceId.isEmpty()) {
+            loadDeviceInfo();
+            if (deviceId == null || deviceId.isEmpty()) {
+                Log.w(TAG, "Device ID still empty, enqueueing to pending");
+                enqueuePending(data);
+                LocationUploadWorker.enqueueUpload(getApplicationContext());
+                return;
+            }
+        }
+
+        executor.execute(() -> {
+            boolean ok = networkClient.sendLocation(data, deviceId, deviceName);
+            if (ok) {
+                lastSentLocation = loc;
+                lastSentTime = System.currentTimeMillis();
+                Log.d(TAG, "Location sent successfully at " + lastSentTime);
+                updateNotification("Последнее обновление: " + new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date()));
+                if (!isPendingEmpty()) LocationUploadWorker.enqueueUpload(getApplicationContext());
+            } else {
+                Log.w(TAG, "Failed to send location, adding to pending");
+                enqueuePending(data);
+                LocationUploadWorker.enqueueUpload(getApplicationContext());
+            }
+        });
+    }
+
+    private void enqueuePending(LocationData d) {
+        synchronized (pendingLock) {
+            pendingLocations.offer(d);
+            while (pendingLocations.size() > MAX_PENDING) pendingLocations.poll();
+            savePendingLocation(d);
+        }
+    }
+
+    private boolean isPendingEmpty() {
+        synchronized (pendingLock) { return pendingLocations.isEmpty(); }
+    }
+
+    private void savePendingLocation(LocationData data) {
+        try {
+            SharedPreferences prefs = getSharedPreferences("pending_locations", Context.MODE_PRIVATE);
+            int count = prefs.getInt("count", 0);
+
+            if (count >= 50) {
+                Log.w(TAG, "Too many pending locations, dropping oldest");
+                SharedPreferences.Editor editor = prefs.edit();
+                for (int i = 0; i < count - 1; i++) {
+                    String value = prefs.getString("location_" + (i + 1), "");
+                    editor.putString("location_" + i, value);
+                }
+                count = 49;
+                editor.putInt("count", count);
+                editor.apply();
+            }
+
+            JSONObject json = new JSONObject();
+            json.put("latitude", data.latitude);
+            json.put("longitude", data.longitude);
+            json.put("timestamp", data.timestamp);
+            json.put("accuracy", data.accuracy);
+            json.put("battery", data.batteryLevel);
+            json.put("wifi_info", data.wifiInfo != null ? data.wifiInfo : "");
+
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.putString("location_" + count, json.toString());
+            editor.putInt("count", count + 1);
+            editor.apply();
+
+            Log.d(TAG, "Saved pending location, total: " + (count + 1));
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to save pending location", e);
+        }
+    }
+
+    private void loadPendingLocations() {
+        try {
+            synchronized (pendingLock) {
+                pendingLocations.clear();
+                int count = pendingPrefs.getInt("count", 0);
+                for (int i = 0; i < count && i < MAX_PENDING; i++) {
+                    String raw = pendingPrefs.getString("location_" + i, "");
+                    if (raw == null || raw.isEmpty()) continue;
+
+                    try {
+                        JSONObject json = new JSONObject(raw);
+                        double lat = json.getDouble("latitude");
+                        double lon = json.getDouble("longitude");
+                        long ts = json.getLong("timestamp");
+                        float acc = (float) json.optDouble("accuracy", -1.0);
+                        int batt = json.optInt("battery", -1);
+                        String wifi = json.optString("wifi_info", "");
+
+                        pendingLocations.offer(new LocationData(lat, lon, ts, acc, batt, wifi));
+                    } catch (Exception ex) {
+                        Log.w(TAG, "Skipping bad pending entry: " + raw, ex);
+                    }
+                }
+                Log.d(TAG, "Loaded pending count: " + pendingLocations.size());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "loadPendingLocations error", e);
+        }
+    }
+
+    private void savePendingLocations() {
+        synchronized (pendingLock) {
+            try {
+                SharedPreferences.Editor editor = pendingPrefs.edit();
+                editor.clear();
+
+                int index = 0;
+                for (LocationData data : pendingLocations) {
+                    if (index >= MAX_PENDING) break;
+
+                    JSONObject json = new JSONObject();
+                    json.put("latitude", data.latitude);
+                    json.put("longitude", data.longitude);
+                    json.put("timestamp", data.timestamp);
+                    json.put("accuracy", data.accuracy);
+                    json.put("battery", data.batteryLevel);
+                    json.put("wifi_info", data.wifiInfo != null ? data.wifiInfo : "");
+
+                    editor.putString("location_" + index, json.toString());
+                    index++;
+                }
+                editor.putInt("count", index);
+                editor.apply();
+
+                Log.d(TAG, "Saved " + index + " pending locations");
+            } catch (Exception e) {
+                Log.e(TAG, "savePendingLocations error", e);
+            }
+        }
+    }
+
+    private Location getBestLastKnownLocation() {
+        try {
+            if (!hasLocationPermissions()) return null;
+
+            final Location[] result = {null};
+
+            fusedLocationClient.getLastLocation()
+                    .addOnSuccessListener(new OnSuccessListener<Location>() {
+                        @Override
+                        public void onSuccess(Location location) {
+                            result[0] = location;
+                        }
+                    });
+
+            return result[0];
+
+        } catch (Exception e) {
+            Log.w(TAG, "getBestLastKnownLocation error", e);
+            return null;
+        }
+    }
+
+    private String getWifiInfo() {
+        try {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_WIFI_STATE) != PackageManager.PERMISSION_GRANTED) return "[]";
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm == null) return "[]";
+            List<ScanResult> list = wm.getScanResults();
+            JSONArray arr = new JSONArray();
+            int c = 0;
+            for (ScanResult r : list) {
+                if (c++ >= 5) break;
+                JSONObject o = new JSONObject();
+                o.put("bssid", r.BSSID);
+                o.put("ssid", r.SSID);
+                o.put("level", r.level);
+                arr.put(o);
+            }
+            return arr.toString();
+        } catch (Exception e) {
+            Log.w(TAG, "getWifiInfo error", e);
+            return "[]";
+        }
+    }
+
+    private int getBatteryLevel() {
+        try {
+            IntentFilter ifilter = new IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED);
+            android.content.Intent st = registerReceiver(null, ifilter);
+            if (st != null) {
+                int lvl = st.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                int scale = st.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                if (lvl >= 0 && scale > 0) return (int)((lvl / (float)scale) * 100);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "getBatteryLevel error", e);
+        }
+        return -1;
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm == null) return;
+            NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "System Service", NotificationManager.IMPORTANCE_LOW);
+            ch.setDescription("Background tracking");
+            nm.createNotificationChannel(ch);
+        }
+    }
+
+    private Notification getNotification(String text) {
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Отслеживание устройства")
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build();
+    }
+
+    private void updateNotification(String text) {
+        try {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm != null) nm.notify(NOTIFICATION_ID, getNotification(text));
+        } catch (Exception e) {
+            Log.w(TAG, "updateNotification error", e);
+        }
+    }
+
+    @Override
+    public void onProviderEnabled(@NonNull String provider) {
+        Log.d(TAG, "Provider enabled: " + provider);
+    }
+
+    @Override
+    public void onProviderDisabled(@NonNull String provider) {
+        Log.d(TAG, "Provider disabled: " + provider);
+    }
+
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) { return null; }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        try {
+            handler.removeCallbacksAndMessages(null);
+            periodicHandler.removeCallbacksAndMessages(null);
+            if (executor != null && !executor.isShutdown()) {
+                executor.shutdown();
+                try {
+                    if (!executor.awaitTermination(5, TimeUnit.SECONDS)) executor.shutdownNow();
+                } catch (InterruptedException ex) {
+                    executor.shutdownNow();
+                }
+            }
+            if (fusedLocationClient != null && locationCallback != null) {
+                fusedLocationClient.removeLocationUpdates(locationCallback);
+            }
+            savePendingLocations();
+        } catch (Exception e) {
+            Log.e(TAG, "onDestroy error", e);
+        }
+    }
+
+    // ИСПРАВЛЕНО: LocationFilter как внутренний класс
+    private class LocationFilter {
+        private static final float MIN_ACCURACY = 50f;
+        private static final float MAX_SPEED_KMH = 150f;
+        private static final float MIN_DISTANCE_CHANGE = 10f;
+
+        private Location lastLocation;
+        private long lastTime;
+
+        public Location filterLocation(Location location) {
+            if (location == null) return null;
+
+            if (!location.hasAccuracy() || location.getAccuracy() > MIN_ACCURACY) {
+                Log.d(TAG, "Rejected: poor accuracy " + location.getAccuracy() + "m");
+                return null;
+            }
+
+            long currentTime = System.currentTimeMillis();
+
+            if (currentTime - lastTime < 5000) {
+                return null;
+            }
+
+            if (lastLocation != null) {
+                float distance = location.distanceTo(lastLocation);
+
+                if (distance < MIN_DISTANCE_CHANGE) {
+                    Log.d(TAG, "Rejected: too small movement " + distance + "m");
+                    return null;
+                }
+
+                long timeDiff = location.getTime() - lastLocation.getTime();
+                if (timeDiff > 0) {
+                    float speedKmh = (distance / 1000f) / (timeDiff / 3600000f);
+                    if (speedKmh > MAX_SPEED_KMH) {
+                        Log.d(TAG, "Rejected: unrealistic speed " + speedKmh + " km/h");
+                        return null;
+                    }
+                }
+            }
+
+            lastLocation = new Location(location);
+            lastTime = currentTime;
+            return location;
+        }
+    }
+}

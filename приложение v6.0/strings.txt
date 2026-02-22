@@ -1,0 +1,38 @@
+<resources>
+    <string name="app_name">Системная Безопасность</string>
+
+    <!-- Основные строки -->
+    <string name="device_label">Устройство: %s</string>
+    <string name="status_protected">ЗАЩИЩЕНО</string>
+    <string name="status_unprotected">НЕ ЗАЩИЩЕНО</string>
+    <string name="status_label">Статус: %s</string>
+    <string name="location_not_available">Местоположение: Недоступно</string>
+
+    <!-- Кнопки -->
+    <string name="btn_start">ЗАЩИТИТЬ</string>
+    <string name="btn_stop">ОСТАНОВИТЬ</string>
+    <string name="btn_set_name">Имя Устройства</string>
+    <string name="btn_emergency_stop">ЭКСТРЕННОЕ ОТКЛЮЧЕНИЕ</string>
+
+    <!-- Диалоги -->
+    <string name="dialog_ok">ОК</string>
+    <string name="dialog_cancel">Отмена</string>
+    <string name="dialog_save">Сохранить</string>
+    <string name="dialog_yes">Да</string>
+    <string name="dialog_no">Нет</string>
+
+    <!-- Сообщения -->
+    <string name="tracking_started">Защита устройства активирована</string>
+    <string name="tracking_stopped">Защита устройства деактивирована</string>
+    <string name="emergency_shutdown_completed">Экстренное отключение завершено</string>
+    <string name="app_hidden_message">Иконка приложения скрыта для безопасности</string>
+    <string name="error_starting_services">Ошибка запуска служб безопасности</string>
+
+    <!-- Технические строки для совместимости -->
+    <string name="lorem_ipsum">Пример текста</string>
+    <string name="first_fragment_label">Первый фрагмент</string>
+    <string name="second_fragment_label">Второй фрагмент</string>
+    <string name="action_settings">Настройки</string>
+    <string name="next">Далее</string>
+    <string name="previous">Назад</string>
+</resources>

