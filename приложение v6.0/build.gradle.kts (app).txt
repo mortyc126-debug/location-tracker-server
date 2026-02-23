@@ -47,30 +47,18 @@ android {
 }
 
 dependencies {
-    implementation(libs.appcompat)
-    implementation(libs.material)
-    implementation(libs.constraintlayout)
-    implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.gms:play-services-location:21.0.1")
-    implementation("com.google.android.material:material:1.9.0")
+    // Bug #26: Убраны дубликаты, оставлены только актуальные версии
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("com.google.android.gms:play-services-location:21.0.1")
     implementation("androidx.work:work-runtime:2.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.11.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha03")
     implementation("org.osmdroid:osmdroid-android:6.1.18")
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-
-
-    // OSMDroid для карт
-    implementation("org.osmdroid:osmdroid-android:6.1.18")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-
 }

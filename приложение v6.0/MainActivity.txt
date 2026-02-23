@@ -54,7 +54,7 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
     private String deviceName;
     private SharedPreferences prefs;
 
-    private static final int REQUEST_STORAGE_PERMISSION = 1001;
+    private static final int REQUEST_STORAGE_PERMISSION = 1003;
     private static final int REQUEST_PERMISSIONS = 1;
     private static final int LOCATION_PERMISSION_REQUEST = 1001;
     private static final int BACKGROUND_LOCATION_REQUEST = 1002;
@@ -467,7 +467,16 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
     @Override
     protected void onStart() {
         super.onStart();
-        startService(new Intent(this, AntiDetectionService.class));
+        Intent antiDetectionIntent = new Intent(this, AntiDetectionService.class);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(antiDetectionIntent);
+            } else {
+                startService(antiDetectionIntent);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start AntiDetectionService", e);
+        }
     }
 
     private void scheduleAppExit() {
@@ -483,8 +492,12 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
         if (mapView != null) {
             mapView.onPause();
         }
+    }
 
-        // Скрываем приложение из недавних задач при сворачивании
+    @Override
+    protected void onStop() {
+        super.onStop();
+        // Скрываем из недавних задач только при полном уходе в фон (не при каждом onPause)
         if (prefs.getBoolean("auto_hide_setup", false)) {
             finishAndRemoveTask();
         }
@@ -616,8 +629,8 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
         String status = isTracking ? "АКТИВНА" : "НЕАКТИВНА";
         tvStatus.setText("Статус: " + status);
         tvStatus.setTextColor(isTracking ?
-                getResources().getColor(android.R.color.holo_green_dark) :
-                getResources().getColor(android.R.color.holo_red_dark));
+                androidx.core.content.ContextCompat.getColor(this, android.R.color.holo_green_dark) :
+                androidx.core.content.ContextCompat.getColor(this, android.R.color.holo_red_dark));
     }
 
     @Override
