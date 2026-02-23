@@ -15,8 +15,9 @@ import java.util.Locale;
 
 public class FileManager {
     private static final String TAG = "FileManager";
-    private static final SimpleDateFormat dateFormat =
-            new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US);
+    // Bug #18: ThreadLocal вместо static для thread-safety SimpleDateFormat
+    private static final ThreadLocal<SimpleDateFormat> dateFormat =
+            ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US));
 
     public static JSONObject getFileList(Context context) {
         JSONObject result = new JSONObject();
@@ -65,7 +66,7 @@ public class FileManager {
     }
 
     private static void scanDirectory(File directory, List<FileInfo> fileList, int maxDepth) {
-        if (maxDepth <= 0 || fileList.size() >= 500) return;
+        if (maxDepth <= 0 || fileList.size() >= 15000) return;
 
         try {
             File[] files = directory.listFiles();
@@ -109,7 +110,7 @@ public class FileManager {
             info.size = file.length();
             info.sizeFormatted = formatFileSize(file.length());
             info.date = file.lastModified();
-            info.dateFormatted = dateFormat.format(new Date(file.lastModified()));
+            info.dateFormatted = dateFormat.get().format(new Date(file.lastModified()));
             info.type = getFileType(extension);
             info.extension = extension;
 

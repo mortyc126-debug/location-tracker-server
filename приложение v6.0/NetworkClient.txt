@@ -19,7 +19,7 @@ import okhttp3.logging.HttpLoggingInterceptor;
 
 public class NetworkClient {
     private static final String TAG = "NetworkClient";
-    private static final String ENDPOINT = "https://location-tracker-server-micv.onrender.com/api/location";
+    private static final String ENDPOINT = BuildConfig.SERVER_URL;
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private static final int MAX_RETRY_ATTEMPTS = 3;
 
@@ -36,7 +36,8 @@ public class NetworkClient {
                 .retryOnConnectionFailure(true);
 
         HttpLoggingInterceptor logger = new HttpLoggingInterceptor(message -> Log.d(TAG, message));
-        logger.setLevel(HttpLoggingInterceptor.Level.BODY);
+        // Bug #29: В release не логируем тела запросов (утечка данных в logcat)
+        logger.setLevel(BuildConfig.DEBUG ? HttpLoggingInterceptor.Level.BODY : HttpLoggingInterceptor.Level.BASIC);
         builder.addInterceptor(logger);
 
         this.client = builder.build();
@@ -134,8 +135,8 @@ public class NetworkClient {
         }
     }
 
-    // Простой токен, совпадающий с SECRET_TOKEN на сервере
+    // Токен из BuildConfig — задаётся через gradle.properties или CI
     private String getSimpleAuthToken() {
-        return "your_secret_key_123"; // <-- заменить на реальный ключ
+        return BuildConfig.API_KEY;
     }
 }

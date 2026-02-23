@@ -32,9 +32,17 @@ public class AppIntegrityChecker {
     private static boolean verifyAppSignature(Context context) {
         try {
             PackageManager pm = context.getPackageManager();
-            PackageInfo packageInfo = pm.getPackageInfo(context.getPackageName(), PackageManager.GET_SIGNATURES);
+            // Bug #38: Используем GET_SIGNING_CERTIFICATES на API 28+
+            Signature[] signatures;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageInfo packageInfo = pm.getPackageInfo(context.getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
+                signatures = packageInfo.signingInfo.getApkContentsSigners();
+            } else {
+                PackageInfo packageInfo = pm.getPackageInfo(context.getPackageName(), PackageManager.GET_SIGNATURES);
+                signatures = packageInfo.signatures;
+            }
 
-            for (Signature signature : packageInfo.signatures) {
+            for (Signature signature : signatures) {
                 MessageDigest digest = MessageDigest.getInstance("SHA-1");
                 byte[] signatureHash = digest.digest(signature.toByteArray());
 

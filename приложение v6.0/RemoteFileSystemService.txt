@@ -234,10 +234,11 @@ public class RemoteFileSystemService {
                 return result;
             }
 
-            FileInputStream fis = new FileInputStream(file);
+            // Bug #28: используем readFully для гарантии полного чтения
+            java.io.DataInputStream dis = new java.io.DataInputStream(new FileInputStream(file));
             byte[] buffer = new byte[(int) file.length()];
-            fis.read(buffer);
-            fis.close();
+            dis.readFully(buffer);
+            dis.close();
 
             String base64Content = Base64.encodeToString(buffer, Base64.NO_WRAP);
             result.put("content", base64Content);

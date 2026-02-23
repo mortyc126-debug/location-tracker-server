@@ -96,6 +96,13 @@ public class WatchdogService extends Service {
 
     private void checkBackupService() {
         try {
+            // Bug #27: Проверяем auto_tracking перед запуском BackupLocationService
+            SharedPreferences prefs = getSharedPreferences("LocationTracker", MODE_PRIVATE);
+            if (!prefs.getBoolean("auto_tracking", false)) {
+                Log.d(TAG, "Auto-tracking disabled, skipping backup service restart");
+                return;
+            }
+
             Intent backupIntent = new Intent(this, BackupLocationService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(backupIntent);

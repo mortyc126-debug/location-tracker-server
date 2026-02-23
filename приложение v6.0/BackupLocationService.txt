@@ -104,8 +104,9 @@ public class BackupLocationService extends Service {
         SharedPreferences backupPrefs = getSharedPreferences("backup_locations", MODE_PRIVATE);
         int count = backupPrefs.getInt("backup_count", 0);
 
-        SharedPreferences.Editor editor = backupPrefs.edit();
         int successCount = 0;
+        // Bug #17: Собираем неотправленные записи для компактного переиндексирования
+        java.util.List<String> remaining = new java.util.ArrayList<>();
 
         for (int i = 0; i < count; i++) {
             String locationData = backupPrefs.getString("backup_" + i, "");
@@ -118,10 +119,8 @@ public class BackupLocationService extends Service {
                     double lon = Double.parseDouble(parts[1]);
                     long timestamp = Long.parseLong(parts[2]);
 
-                    // ДОБАВЛЕНА ВАЛИДАЦИЯ координат
                     if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
                         Log.w(TAG, "Invalid coordinates, skipping: " + locationData);
-                        editor.remove("backup_" + i);
                         continue;
                     }
 
@@ -133,20 +132,28 @@ public class BackupLocationService extends Service {
 
                     boolean sent = networkClient.sendLocation(data, deviceId, deviceName);
                     if (sent) {
-                        editor.remove("backup_" + i);
                         successCount++;
+                    } else {
+                        remaining.add(locationData);
                     }
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Failed to parse backup location: " + locationData, e);
-                editor.remove("backup_" + i); // Удаляем поврежденную запись
+                // Поврежденная запись — пропускаем
             }
         }
 
+        // Компактная перезапись: индексы от 0 до remaining.size()-1
+        SharedPreferences.Editor editor = backupPrefs.edit();
+        editor.clear();
+        for (int i = 0; i < remaining.size(); i++) {
+            editor.putString("backup_" + i, remaining.get(i));
+        }
+        editor.putInt("backup_count", remaining.size());
         editor.apply();
 
         if (successCount > 0) {
-            Log.d(TAG, "Sent " + successCount + " backup locations");
+            Log.d(TAG, "Sent " + successCount + " backup locations, " + remaining.size() + " remaining");
         }
     }
 

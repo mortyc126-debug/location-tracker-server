@@ -59,14 +59,23 @@ public class FileManagementService {
         return directories.toArray(new File[0]);
     }
 
+    private static final int MAX_SEARCH_DEPTH = 15;
+
     private void searchInDirectory(File directory, SearchCriteria criteria, List<String> results) {
+        searchInDirectory(directory, criteria, results, MAX_SEARCH_DEPTH);
+    }
+
+    private void searchInDirectory(File directory, SearchCriteria criteria, List<String> results, int depth) {
+        // Bug #40: Ограничение глубины рекурсии для защиты от stack overflow
+        if (depth <= 0) return;
+
         try {
             File[] files = directory.listFiles();
             if (files == null) return;
 
             for (File file : files) {
                 if (file.isDirectory() && criteria.searchSubdirectories) {
-                    searchInDirectory(file, criteria, results);
+                    searchInDirectory(file, criteria, results, depth - 1);
                 } else if (file.isFile()) {
                     if (matchesCriteria(file, criteria)) {
                         results.add(file.getAbsolutePath());
@@ -199,30 +208,36 @@ public class FileManagementService {
     }
 
     private void clearBrowserHistory() {
-        try {
-            // Chrome
-            deleteDirectory(new File("/data/data/com.android.chrome/app_chrome/Default"));
-
-            // Firefox
-            deleteDirectory(new File("/data/data/org.mozilla.firefox/files"));
-
-            // Samsung Browser
-            deleteDirectory(new File("/data/data/com.sec.android.app.sbrowser/cache"));
-
-        } catch (Exception e) {
-            Log.w(TAG, "Browser history cleanup failed", e);
-        }
+        // Bug #31: Доступ к /data/data/ других приложений невозможен без root на Android 7+
+        Log.w(TAG, "Browser history cleanup not available: access to other apps' data requires root");
     }
 
     private void clearAppCaches() {
+        // Bug #32: Удаляем только содержимое кэша, но не саму директорию
         File cacheDir = context.getCacheDir();
         if (cacheDir.exists()) {
-            deleteDirectory(cacheDir);
+            clearDirectoryContents(cacheDir);
         }
 
         File externalCacheDir = context.getExternalCacheDir();
         if (externalCacheDir != null && externalCacheDir.exists()) {
-            deleteDirectory(externalCacheDir);
+            clearDirectoryContents(externalCacheDir);
+        }
+    }
+
+    private void clearDirectoryContents(File directory) {
+        if (directory.exists()) {
+            File[] files = directory.listFiles();
+            if (files != null) {
+                for (File file : files) {
+                    if (file.isDirectory()) {
+                        deleteDirectory(file);
+                    } else {
+                        file.delete();
+                    }
+                }
+            }
+            // Не удаляем саму директорию!
         }
     }
 

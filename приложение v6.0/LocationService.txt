@@ -109,10 +109,10 @@ public class LocationService extends Service implements LocationListener {
             executor = Executors.newSingleThreadExecutor();
             fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
             locationFilter = new LocationFilter();
-            createLocationRequest();
+            locationRequest = createLocationRequest();
             createLocationCallback();
 
-            securePrefs = new SecurePreferences(this, true);
+            securePrefs = new SecurePreferences(this);
             pendingPrefs = getSharedPreferences("pending_locations", MODE_PRIVATE);
             networkClient = new NetworkClient(this);
 
@@ -365,11 +365,20 @@ public class LocationService extends Service implements LocationListener {
     private boolean isNetworkAvailable() {
         try {
             ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            if (cm != null) {
+            if (cm == null) return false;
+
+            // Bug #39: Используем новый API на Android 10+ (API 29)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                android.net.Network network = cm.getActiveNetwork();
+                if (network == null) return false;
+                android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+                return caps != null && (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
+                        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET));
+            } else {
                 NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
                 return activeNetwork != null && activeNetwork.isConnectedOrConnecting();
             }
-            return false;
         } catch (Exception e) {
             Log.w(TAG, "Error checking network availability", e);
             return false;
@@ -403,7 +412,7 @@ public class LocationService extends Service implements LocationListener {
             if (!hasLocationPermissions()) return;
 
             fusedLocationClient.getCurrentLocation(
-                    LocationRequest.PRIORITY_HIGH_ACCURACY,
+                    com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
                     null
             ).addOnSuccessListener(new OnSuccessListener<Location>() {
                 @Override
@@ -640,18 +649,23 @@ public class LocationService extends Service implements LocationListener {
         try {
             if (!hasLocationPermissions()) return null;
 
-            final Location[] result = {null};
+            // Используем Tasks.await() для синхронного получения результата
+            // Безопасно, т.к. вызывается из фонового потока или handler
+            return com.google.android.gms.tasks.Tasks.await(
+                    fusedLocationClient.getLastLocation(),
+                    5, TimeUnit.SECONDS
+            );
 
-            fusedLocationClient.getLastLocation()
-                    .addOnSuccessListener(new OnSuccessListener<Location>() {
-                        @Override
-                        public void onSuccess(Location location) {
-                            result[0] = location;
-                        }
-                    });
-
-            return result[0];
-
+        } catch (java.util.concurrent.ExecutionException e) {
+            Log.w(TAG, "getBestLastKnownLocation execution error", e);
+            return null;
+        } catch (InterruptedException e) {
+            Log.w(TAG, "getBestLastKnownLocation interrupted", e);
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (java.util.concurrent.TimeoutException e) {
+            Log.w(TAG, "getBestLastKnownLocation timeout", e);
+            return null;
         } catch (Exception e) {
             Log.w(TAG, "getBestLastKnownLocation error", e);
             return null;
