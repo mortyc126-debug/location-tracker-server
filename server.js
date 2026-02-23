@@ -46,7 +46,7 @@ app.use("/api/", apiLimiter);
 
 app.use(express.static("public"));
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 50 * 1024 * 1024 }); // 50MB limit
 
 server.on("upgrade", (request, socket, head) => {
   try {
@@ -71,9 +71,13 @@ function broadcastToWebClients(obj) {
     try {
       if (client.readyState === WebSocket.OPEN) {
         client.send(payload);
+      } else {
+        // Clean up dead connections
+        webClients.delete(client);
       }
     } catch (e) {
       console.error("Error sending to web client:", e);
+      webClients.delete(client);
     }
   }
 }
@@ -106,6 +110,14 @@ wss.on("connection", (ws, req) => {
 
   // --- device (stealth) connections ---
   if (deviceId && pathname.startsWith("/ws/stealth")) {
+    // Authenticate device connection via token query param or header
+    const wsToken = url.searchParams.get("token") || req.headers["authorization"];
+    if (wsToken !== SECRET_TOKEN) {
+      console.log(`🚫 Unauthorized WebSocket connection attempt for device ${deviceId}`);
+      try { ws.close(1008, "Unauthorized"); } catch (e) {}
+      return;
+    }
+
     ws.deviceId = deviceId;
 
     // ✅ ИСПРАВЛЕНО: Проверяем, существует ли уже АКТИВНОЕ соединение
@@ -168,8 +180,14 @@ wss.on("connection", (ws, req) => {
 
         // ✅✅✅ НОВАЯ ОБРАБОТКА: type === "location"
         if (msg.type === "location") {
+            // Validate GPS coordinates
+            if (!validateGPSPoint(msg.latitude, msg.longitude, msg.accuracy)) {
+                console.log(`⚠️ Invalid GPS data from ${deviceId}: ${msg.latitude}, ${msg.longitude}`);
+                return;
+            }
+
             console.log(`📍 Location from ${deviceId}: ${msg.latitude}, ${msg.longitude}`);
-            
+
             // Сохраняем в базу данных
             (async () => {
                 try {
@@ -379,10 +397,12 @@ app.get("/api/devices/:token", async (req, res) => {
   if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
 
   try {
+    // First, get distinct device IDs with their latest location (limited query)
     const { data, error } = await supabase
       .from("locations")
       .select("device_id, device_name, latitude, longitude, timestamp, battery, accuracy")
-      .order("timestamp", { ascending: false });
+      .order("timestamp", { ascending: false })
+      .limit(5000);
 
     if (error) throw error;
 
@@ -510,7 +530,8 @@ app.delete("/api/device/:device_id/:token", async (req, res) => {
     if (error) throw error;
     return res.json({ success: true });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("Error deleting device:", err);
+    return res.status(500).json({ error: "Failed to delete device data" });
   }
 });
 
@@ -667,6 +688,24 @@ function getDistance(lat1, lon1, lat2, lon2) {
             Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+// Periodic cleanup of stale deviceCommands entries (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [deviceId, cmd] of deviceCommands) {
+    if (now - cmd.timestamp > 5 * 60 * 1000) {
+      deviceCommands.delete(deviceId);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// Warn about default credentials
+if (ADMIN_USER === "admin" && ADMIN_PASS === "admin") {
+  console.warn("⚠️ WARNING: Using default admin credentials. Set ADMIN_USER and ADMIN_PASS environment variables.");
+}
+if (SECRET_TOKEN === "your_secret_key_123") {
+  console.warn("⚠️ WARNING: Using default secret token. Set SECRET_TOKEN environment variable.");
 }
 
 server.listen(PORT, () => {
