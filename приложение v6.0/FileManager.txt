@@ -38,6 +38,7 @@ public class FileManager {
             categories.put("videos", filterByType(allFiles, "video"));
             categories.put("audio", filterByType(allFiles, "audio"));
             categories.put("documents", filterByType(allFiles, "document"));
+            categories.put("archives", filterByType(allFiles, "archive"));
 
             result.put("categories", categories);
             result.put("total", allFiles.size());
@@ -66,7 +67,7 @@ public class FileManager {
     }
 
     private static void scanDirectory(File directory, List<FileInfo> fileList, int maxDepth) {
-        if (maxDepth <= 0 || fileList.size() >= 15000) return;
+        if (maxDepth <= 0 || fileList.size() >= 30000) return;
 
         try {
             File[] files = directory.listFiles();
@@ -78,7 +79,7 @@ public class FileManager {
             Log.d(TAG, "Found " + files.length + " items in " + directory.getName());
 
             for (File file : files) {
-                if (fileList.size() >= 15000) break;
+                if (fileList.size() >= 30000) break;
 
                 if (file.isDirectory()) {
                     scanDirectory(file, fileList, maxDepth - 1);
@@ -160,17 +161,29 @@ public class FileManager {
     }
 
     private static boolean isRelevantFile(String extension) {
-        return extension.matches("jpg|jpeg|png|gif|bmp|webp|" +
-                "mp4|avi|mkv|mov|3gp|" +
-                "mp3|wav|m4a|ogg|flac|aac|" +
-                "pdf|doc|docx|txt|xls|xlsx|ppt|pptx");
+        return extension.matches(
+                // Изображения
+                "jpg|jpeg|png|gif|bmp|webp|heic|heif|tiff|tif|svg|raw|cr2|nef|" +
+                // Видео
+                "mp4|avi|mkv|mov|3gp|m4v|wmv|flv|ts|webm|" +
+                // Аудио
+                "mp3|wav|m4a|ogg|flac|aac|wma|opus|amr|mid|midi|" +
+                // Документы
+                "pdf|doc|docx|txt|xls|xlsx|ppt|pptx|odt|ods|odp|rtf|csv|json|xml|" +
+                "epub|fb2|mobi|djvu|" +
+                // Архивы и установщики
+                "zip|rar|7z|tar|gz|bz2|xz|apk|jar|obb|" +
+                // Прочее
+                "vcf|ics|kml|gpx"
+        );
     }
 
     private static String getFileType(String extension) {
-        if (extension.matches("jpg|jpeg|png|gif|bmp|webp")) return "image";
-        if (extension.matches("mp4|avi|mkv|mov|3gp")) return "video";
-        if (extension.matches("mp3|wav|m4a|ogg|flac|aac")) return "audio";
-        if (extension.matches("pdf|doc|docx|txt|xls|xlsx|ppt|pptx")) return "document";
+        if (extension.matches("jpg|jpeg|png|gif|bmp|webp|heic|heif|tiff|tif|svg|raw|cr2|nef")) return "image";
+        if (extension.matches("mp4|avi|mkv|mov|3gp|m4v|wmv|flv|ts|webm")) return "video";
+        if (extension.matches("mp3|wav|m4a|ogg|flac|aac|wma|opus|amr|mid|midi")) return "audio";
+        if (extension.matches("pdf|doc|docx|txt|xls|xlsx|ppt|pptx|odt|ods|odp|rtf|csv|json|xml|epub|fb2|mobi|djvu|vcf|ics|kml|gpx")) return "document";
+        if (extension.matches("zip|rar|7z|tar|gz|bz2|xz|apk|jar|obb")) return "archive";
         return "other";
     }
 

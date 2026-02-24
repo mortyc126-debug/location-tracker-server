@@ -1461,6 +1461,10 @@
                             handleFileDownload(data);
                             break;
 
+                        case 'file_chunk_progress':
+                            updateDownloadProgress(data.filename, data.received, data.total);
+                            break;
+
                         case 'file_list':
                             displayFileList(data.data);
                             break;
@@ -1768,12 +1772,13 @@
             }
             
             const categories = data.categories;
-            const tabs = ['images', 'videos', 'audio', 'documents'];
+            const tabs = ['images', 'videos', 'audio', 'documents', 'archives'];
             const icons = {
                 images: '🖼️',
                 videos: '🎬',
                 audio: '🎵',
-                documents: '📄'
+                documents: '📄',
+                archives: '🗜️'
             };
             
             const tabsHtml = tabs.map(tab => 
@@ -1908,9 +1913,32 @@
             }
         }
 
+        function updateDownloadProgress(filename, received, total) {
+            const pct = Math.round((received / total) * 100);
+            let bar = document.getElementById('download-progress-bar');
+            if (!bar) {
+                const container = document.createElement('div');
+                container.id = 'download-progress-bar';
+                container.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#1a1a2e;border:1px solid var(--primary-gold);border-radius:8px;padding:12px 16px;z-index:9999;min-width:260px;font-size:13px;';
+                container.innerHTML = `<div style="color:var(--primary-gold);margin-bottom:6px;">⬇ Загрузка: <span id="dl-filename"></span></div>
+                    <div style="background:#333;border-radius:4px;height:8px;overflow:hidden;">
+                        <div id="dl-bar" style="height:100%;background:var(--primary-gold);transition:width 0.2s;width:0%"></div>
+                    </div>
+                    <div id="dl-pct" style="color:#aaa;margin-top:4px;text-align:right;"></div>`;
+                document.body.appendChild(container);
+                bar = container;
+            }
+            document.getElementById('dl-filename').textContent = filename;
+            document.getElementById('dl-bar').style.width = pct + '%';
+            document.getElementById('dl-pct').textContent = `${received} / ${total} чанков (${pct}%)`;
+        }
+
         function handleFileDownload(fileData) {
+            // Убираем прогресс-бар чанков если был
+            const progressBar = document.getElementById('download-progress-bar');
+            if (progressBar) progressBar.remove();
+
             try {
-                // ✅ ИСПРАВЛЕНО: Проверка данных
                 if (!fileData || !fileData.data || !fileData.filename) {
                     console.error('Invalid file data:', fileData);
                     alert('Invalid file data received');
@@ -1924,19 +1952,28 @@
                 
                 const extension = fileData.filename.split('.').pop().toLowerCase();
                 const mimeTypes = {
-                    'jpg': 'image/jpeg',
-                    'jpeg': 'image/jpeg',
-                    'png': 'image/png',
-                    'gif': 'image/gif',
-                    'webp': 'image/webp',
-                    'mp4': 'video/mp4',
-                    'mp3': 'audio/mpeg',
-                    'wav': 'audio/wav',
+                    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+                    'gif': 'image/gif', 'webp': 'image/webp', 'heic': 'image/heic',
+                    'mp4': 'video/mp4', 'mkv': 'video/x-matroska', 'avi': 'video/x-msvideo',
+                    'mov': 'video/quicktime', 'webm': 'video/webm',
+                    'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'm4a': 'audio/mp4',
+                    'ogg': 'audio/ogg', 'flac': 'audio/flac', 'aac': 'audio/aac',
+                    'opus': 'audio/opus', 'wma': 'audio/x-ms-wma',
                     'pdf': 'application/pdf',
-                    'txt': 'text/plain',
                     'doc': 'application/msword',
                     'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    'zip': 'application/zip'
+                    'xls': 'application/vnd.ms-excel',
+                    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    'ppt': 'application/vnd.ms-powerpoint',
+                    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                    'txt': 'text/plain', 'csv': 'text/csv', 'json': 'application/json',
+                    'xml': 'application/xml', 'rtf': 'application/rtf',
+                    'epub': 'application/epub+zip', 'fb2': 'application/x-fictionbook',
+                    'zip': 'application/zip', 'rar': 'application/vnd.rar',
+                    '7z': 'application/x-7z-compressed', 'tar': 'application/x-tar',
+                    'gz': 'application/gzip', 'apk': 'application/vnd.android.package-archive',
+                    'vcf': 'text/vcard', 'ics': 'text/calendar',
+                    'kml': 'application/vnd.google-earth.kml+xml'
                 };
                 
                 const mimeType = mimeTypes[extension] || 'application/octet-stream';
