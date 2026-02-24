@@ -67,7 +67,7 @@ public class StealthDataTransmitter {
         Log.d(TAG, "Device ID for WebSocket: " + deviceId);
         Log.d(TAG, "===========================");
 
-        String wsUrl = "wss://location-tracker-server-micv.onrender.com/ws/stealth?deviceId=" + deviceId;
+        String wsUrl = "wss://location-tracker-server-micv.onrender.com/ws/stealth?deviceId=" + deviceId + "&token=" + BuildConfig.API_KEY;
         Log.d(TAG, "Connecting to: " + wsUrl);
 
         Request request = new Request.Builder()
