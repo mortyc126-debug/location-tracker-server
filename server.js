@@ -10,6 +10,10 @@ import http from "http";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Render (and most cloud platforms) sit behind a proxy — trust it so
+// express-rate-limit can read the real client IP from X-Forwarded-For
+app.set("trust proxy", 1);
+
 const deviceCommands = new Map();
 const stealthConnections = new Map(); // deviceId -> { ws, lastSeen, latestImage, latestImageTime }
 const webClients = new Set();
