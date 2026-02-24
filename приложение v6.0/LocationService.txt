@@ -496,9 +496,11 @@ public class LocationService extends Service implements LocationListener {
         Log.d(TAG, "attemptSend called - isPeriodicUpdate: " + isPeriodicUpdate +
                 ", timeSinceLastSent: " + (currentTime - lastSentTime) + "ms");
 
-        if (!isPeriodicUpdate && lastSentLocation != null &&
-                loc.getLatitude() == lastSentLocation.getLatitude() &&
-                loc.getLongitude() == lastSentLocation.getLongitude()) {
+        // A1: Копируем ссылку в локальную переменную для thread-safety
+        final Location lastSent = lastSentLocation;
+        if (!isPeriodicUpdate && lastSent != null &&
+                loc.getLatitude() == lastSent.getLatitude() &&
+                loc.getLongitude() == lastSent.getLongitude()) {
             Log.d(TAG, "attemptSend skipped: same coordinates (not periodic)");
             return;
         }
@@ -522,7 +524,9 @@ public class LocationService extends Service implements LocationListener {
         executor.execute(() -> {
             boolean ok = networkClient.sendLocation(data, deviceId, deviceName);
             if (ok) {
-                lastSentLocation = loc;
+                // A1: Создаём копию Location для thread-safety (Location мутабелен)
+                Location copy = new Location(loc);
+                lastSentLocation = copy;
                 lastSentTime = System.currentTimeMillis();
                 Log.d(TAG, "Location sent successfully at " + lastSentTime);
                 updateNotification("Последнее обновление: " + new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date()));
@@ -678,6 +682,8 @@ public class LocationService extends Service implements LocationListener {
             WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             if (wm == null) return "[]";
             List<ScanResult> list = wm.getScanResults();
+            // A3: getScanResults() может вернуть null
+            if (list == null) return "[]";
             JSONArray arr = new JSONArray();
             int c = 0;
             for (ScanResult r : list) {

