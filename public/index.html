@@ -1465,6 +1465,10 @@
                             displayFileList(data.data);
                             break;
 
+                        case 'search_results':
+                            displaySearchResults(data.files || []);
+                            break;
+
                         default:
                             console.log('Unknown message type:', data.type);
                     }
@@ -2028,8 +2032,8 @@
                 throw new Error('No device selected');
             }
             
-            // ✅ ИСПРАВЛЕНО: Правильный endpoint
-            const response = await fetch('/api/device/command', {
+            // Файловые команды идут через /api/device/file-command (сохраняет keywords/extensions)
+            const response = await fetch('/api/device/file-command', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
