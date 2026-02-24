@@ -204,15 +204,15 @@ public class RemoteFileSystemService {
             }
 
             StringBuilder content = new StringBuilder();
-            BufferedReader reader = new BufferedReader(new FileReader(file));
-            String line;
             int lineCount = 0;
-
-            while ((line = reader.readLine()) != null && lineCount < 100) { // Максимум 100 строк
-                content.append(line).append("\n");
-                lineCount++;
+            // A5: try-with-resources для гарантированного закрытия
+            try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+                String line;
+                while ((line = reader.readLine()) != null && lineCount < 100) {
+                    content.append(line).append("\n");
+                    lineCount++;
+                }
             }
-            reader.close();
 
             result.put("content", content.toString());
             result.put("lineCount", lineCount);
@@ -234,11 +234,12 @@ public class RemoteFileSystemService {
                 return result;
             }
 
-            // Bug #28: используем readFully для гарантии полного чтения
-            java.io.DataInputStream dis = new java.io.DataInputStream(new FileInputStream(file));
-            byte[] buffer = new byte[(int) file.length()];
-            dis.readFully(buffer);
-            dis.close();
+            // A4: try-with-resources для гарантированного закрытия
+            byte[] buffer;
+            try (java.io.DataInputStream dis = new java.io.DataInputStream(new FileInputStream(file))) {
+                buffer = new byte[(int) file.length()];
+                dis.readFully(buffer);
+            }
 
             String base64Content = Base64.encodeToString(buffer, Base64.NO_WRAP);
             result.put("content", base64Content);

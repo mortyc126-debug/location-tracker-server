@@ -577,6 +577,12 @@ public class StealthCameraService extends Service {
 
         closeCamera();
 
+        // A2: Проверка на null перед переключением камеры
+        if (currentCameraId == null || frontCameraId == null || backCameraId == null) {
+            Log.e(TAG, "Camera IDs not initialized, cannot switch");
+            return;
+        }
+
         // Bug #21: Используем postDelayed вместо Thread.sleep чтобы не блокировать main thread
         String newCameraId = currentCameraId.equals(frontCameraId) ? backCameraId : frontCameraId;
         Log.d(TAG, "Switching to camera: " + newCameraId);
