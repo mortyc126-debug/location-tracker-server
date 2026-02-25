@@ -70,6 +70,7 @@
             android:name=".LocationService"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="location" />
 
         <service
@@ -83,6 +84,7 @@
             android:name=".BackupLocationService"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="location" />
 
         <service
@@ -132,4 +134,5 @@
         </receiver>
 
     </application>
+
 </manifest>
