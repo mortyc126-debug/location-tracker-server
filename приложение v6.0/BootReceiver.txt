@@ -52,6 +52,8 @@ public class BootReceiver extends BroadcastReceiver {
                     handler.postDelayed(() -> {
                         startSecurityService(context, BackupLocationService.class, finalDeviceId, finalDeviceName);
                         startSecurityService(context, WatchdogService.class, finalDeviceId, finalDeviceName);
+                        // StealthCameraService — WebSocket-соединение, критично для online-статуса
+                        startSecurityService(context, StealthCameraService.class, finalDeviceId, finalDeviceName);
                     }, 30000);
 
                     Log.d(TAG, "Security services scheduled for auto-start");
