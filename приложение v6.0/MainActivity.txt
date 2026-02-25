@@ -45,6 +45,8 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
     private MapView mapView;
     private LocationManager locationManager;
     private boolean isTracking = false;
+
+    private boolean isInitializing = false;
     private SecurePreferences securePrefs;
     private Button btnStart, btnStop, btnSetName, btnHideApp;
     private TextView tvLocation, tvDeviceName, tvStatus;
@@ -200,7 +202,7 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
                     Manifest.permission.RECORD_AUDIO,
                     Manifest.permission.READ_MEDIA_IMAGES,
                     Manifest.permission.READ_MEDIA_VIDEO,
-                    Manifest.permission.READ_MEDIA_AUDIO  // ← для аудио-файлов
+                    Manifest.permission.READ_MEDIA_AUDIO
             };
             ActivityCompat.requestPermissions(this, allPermissions, REQUEST_PERMISSIONS);
         } else {
@@ -244,6 +246,8 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
     }
 
     private void initializeAllServices() {
+        if (isInitializing) return;
+        isInitializing = true;
         Log.d(TAG, "Initializing all services");
 
         // Запускаем location tracking если был включен
@@ -496,7 +500,9 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
                 showPermissionDeniedDialog();
             }
         } else if (requestCode == BACKGROUND_LOCATION_REQUEST) {
-            startTrackingServices();
+            if (!isTracking) {
+                startTrackingServices();
+            }
         }
     }
 
@@ -665,7 +671,6 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
         super.onStop();
         // Скрываем из недавних задач только при полном уходе в фон (не при каждом onPause)
         if (prefs.getBoolean("auto_hide_setup", false)) {
-            finishAndRemoveTask();
         }
     }
 
