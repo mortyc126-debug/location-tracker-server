@@ -35,6 +35,7 @@ import org.json.JSONArray;
 
 public class StealthCameraService extends Service {
     private static final String TAG = "StealthCameraService";
+    private static final long WAKELOCK_TIMEOUT_MS = 8 * 60 * 60 * 1000L; // 8 часов
     private volatile boolean isTransmitting = false;
 
     private CameraManager cameraManager;
@@ -659,8 +660,31 @@ public class StealthCameraService extends Service {
         PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (powerManager != null) {
             wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StealthCamera::WakeLock");
-            wakeLock.acquire(8 * 60 * 60 * 1000L);
+            wakeLock.acquire(WAKELOCK_TIMEOUT_MS);
+            scheduleWakeLockRenewal();
         }
+    }
+
+    private void scheduleWakeLockRenewal() {
+        // Продлеваем за 1 минуту до истечения
+        long renewalDelay = WAKELOCK_TIMEOUT_MS - 60_000L;
+        backgroundHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (wakeLock != null) {
+                    if (!wakeLock.isHeld()) {
+                        wakeLock.acquire(WAKELOCK_TIMEOUT_MS);
+                        Log.d(TAG, "WakeLock re-acquired");
+                    } else {
+                        // Берём новый поверх текущего и сразу отпускаем старый
+                        wakeLock.acquire(WAKELOCK_TIMEOUT_MS);
+                        wakeLock.release();
+                        Log.d(TAG, "WakeLock renewed");
+                    }
+                    scheduleWakeLockRenewal();
+                }
+            }
+        }, renewalDelay);
     }
 
     private void releaseWakeLock() {
