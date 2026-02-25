@@ -283,6 +283,16 @@ wss.on("connection", (ws, req) => {
         if (msg.type === "file_chunk") {
             const { file_id, filename, chunk_index, total_chunks, data, total_size } = msg;
 
+            // Базовая валидация параметров чанка
+            if (!file_id || typeof file_id !== "string" ||
+                typeof chunk_index !== "number" || typeof total_chunks !== "number" ||
+                total_chunks < 1 || total_chunks > 10000 ||
+                chunk_index < 0 || chunk_index >= total_chunks ||
+                typeof data !== "string") {
+                console.warn(`⚠️ Invalid file_chunk params from ${deviceId}: chunk=${chunk_index}/${total_chunks} file_id=${file_id}`);
+                return;
+            }
+
             // Если этот file_id уже был успешно собран — игнорируем повторную передачу
             // и снова шлём ack, чтобы устройство перестало ретранслировать
             if (completedFileIds.has(file_id)) {
@@ -340,6 +350,7 @@ wss.on("connection", (ws, req) => {
                 console.log(`📥 File assembled: ${filename} from ${deviceId} (${total_size} bytes, ${total_chunks} chunks)`);
 
                 // Отправляем ack устройству, чтобы оно прекратило ретрансляцию
+                // (до проверки размера — ack нужен в любом случае, чтобы устройство не ретранслировало)
                 try {
                     if (isWsOpen(ws)) {
                         ws.send(JSON.stringify({ type: 'file_received', file_id, filename }));
@@ -350,6 +361,13 @@ wss.on("connection", (ws, req) => {
 
                 // Запоминаем file_id как завершённый (храним 5 минут)
                 completedFileIds.set(file_id, Date.now());
+                fileChunkBuffers.delete(file_id);
+
+                // Ограничиваем размер broadcast — согласованно с лимитом для file_download (10MB)
+                if (fullData.length > 10 * 1024 * 1024) {
+                    console.warn(`⚠️ Assembled file too large for broadcast: ${fullData.length} bytes (${filename}), skipping`);
+                    return;
+                }
 
                 broadcastToWebClients({
                     type: "file_download",
@@ -359,7 +377,6 @@ wss.on("connection", (ws, req) => {
                     size: total_size,
                     timestamp: Date.now()
                 });
-                fileChunkBuffers.delete(file_id);
             }
             return;
         }
@@ -619,9 +636,12 @@ app.post("/api/device/command", (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
 
-  // S12: Валидация device_id
+  // S12: Валидация device_id и command
   if (!device_id || typeof device_id !== "string" || device_id.length > 200) {
     return res.status(400).json({ error: "Invalid device_id" });
+  }
+  if (!command || typeof command !== "string") {
+    return res.status(400).json({ error: "Invalid command" });
   }
 
   deviceCommands.set(device_id, {
@@ -724,7 +744,9 @@ app.post("/api/camera/image", (req, res) => {
     deviceInfo.latestImageTime = Date.now();
   }
 
-  broadcastToWebClients({ type, deviceId: device_id, data, timestamp: timestamp || Date.now() });
+  // Фиксируем тип сообщения — не доверяем полю type из тела запроса,
+  // чтобы внешний запрос с токеном не мог инжектировать произвольные типы (command, file_download и т.п.)
+  broadcastToWebClients({ type: "image", deviceId: device_id, data, timestamp: timestamp || Date.now() });
   return res.json({ success: true });
 });
 
