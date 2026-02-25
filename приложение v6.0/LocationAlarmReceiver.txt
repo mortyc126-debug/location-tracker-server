@@ -13,15 +13,15 @@ public class LocationAlarmReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         Log.d(TAG, "System event received");
-
         try {
-            SharedPreferences systemPrefs = context.getSharedPreferences("system_config", Context.MODE_PRIVATE);
+            SharedPreferences systemPrefs = context.getSharedPreferences(
+                    "system_config", Context.MODE_PRIVATE);
             if (systemPrefs.getBoolean("emergency_shutdown", false)) {
                 return;
             }
 
-            SharedPreferences prefs = context.getSharedPreferences("LocationTracker", Context.MODE_PRIVATE);
-
+            SharedPreferences prefs = context.getSharedPreferences(
+                    "LocationTracker", Context.MODE_PRIVATE);
             if (prefs.getBoolean("auto_tracking", false)) {
                 String deviceId = prefs.getString("device_id", "");
                 String deviceName = prefs.getString("device_name", "SecureDevice");
@@ -31,7 +31,6 @@ public class LocationAlarmReceiver extends BroadcastReceiver {
                     serviceIntent.putExtra("force_update", true);
                     serviceIntent.putExtra("device_id", deviceId);
                     serviceIntent.putExtra("device_name", deviceName);
-
                     try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                             context.startForegroundService(serviceIntent);
@@ -43,6 +42,11 @@ public class LocationAlarmReceiver extends BroadcastReceiver {
                     }
                 }
             }
+
+            // Перепланируем следующее срабатывание —
+            // setExactAndAllowWhileIdle не повторяется автоматически
+            AlarmScheduler.scheduleAlarm(context);
+
         } catch (Exception e) {
             Log.e(TAG, "Error in receiver", e);
         }
