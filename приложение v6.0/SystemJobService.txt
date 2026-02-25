@@ -47,7 +47,7 @@ public class SystemJobService extends JobService {
     public boolean onStopJob(JobParameters params) {
         Log.d(TAG, "Job stopped or cancelled");
         handler.removeCallbacksAndMessages(null);
+        // true = система перезапустит job при принудительной остановке
         return true;
     }
 }
-
