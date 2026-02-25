@@ -159,24 +159,27 @@ wss.on("connection", (ws, req) => {
 
     ws.deviceId = deviceId;
 
-    // ✅ ИСПРАВЛЕНО: Проверяем, существует ли уже АКТИВНОЕ соединение
+    // Проверяем, существует ли уже АКТИВНОЕ соединение
     const existing = stealthConnections.get(deviceId);
     if (existing && existing.ws !== ws) {
-      // Проверяем, действительно ли старое соединение мертво
       if (isWsOpen(existing.ws)) {
         const timeSinceLastPing = Date.now() - (existing.lastSeen || 0);
-        
-        // Если старое соединение живое и недавно пинговало (< 15 секунд)
-        if (timeSinceLastPing < 15000) {
+
+        // Считаем старое соединение живым только если:
+        // 1. Недавний app-ping (< 15 сек) И
+        // 2. ws-level heartbeat подтверждён (isAlive !== false)
+        // Если isAlive === false — ping был отправлен, но pong не получен → сокет завис
+        const appPingRecent = timeSinceLastPing < 15000;
+        const wsAlive = existing.ws.isAlive !== false;
+
+        if (appPingRecent && wsAlive) {
           console.log(`⚠️ Device ${deviceId} trying to connect, but has active connection. Rejecting new.`);
-          // Закрываем НОВОЕ соединение, оставляем старое
           try {
             ws.close(1000, 'Already connected');
           } catch (e) {}
           return;
         } else {
-          // Старое соединение зависло - заменяем
-          console.log(`🔄 Replacing stale connection for device ${deviceId}`);
+          console.log(`🔄 Replacing stale connection for device ${deviceId} (appPingRecent=${appPingRecent}, wsAlive=${wsAlive})`);
           try {
             existing.ws.terminate();
           } catch (e) {}
@@ -187,15 +190,35 @@ wss.on("connection", (ws, req) => {
     stealthConnections.set(deviceId, { ws, lastSeen: Date.now() });
     console.log(`📱 Device ${deviceId} connected`);
 
-    // Логируем активность
-    const keepaliveLogger = setInterval(() => {
+    // ws-level heartbeat: отправляем ws.ping() каждые 30 сек и проверяем pong.
+    // Это позволяет обнаружить зависший сокет (устройство перезапустилось, но TCP-соединение
+    // не закрылось чисто) значительно быстрее, чем ждать application-level ping от устройства.
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+
+    const heartbeat = setInterval(() => {
       const info = stealthConnections.get(deviceId);
-      if (!info || !isWsOpen(ws)) {
-        clearInterval(keepaliveLogger);
+      // Если это соединение уже не актуально — останавливаем
+      if (!info || info.ws !== ws) {
+        clearInterval(heartbeat);
         return;
       }
+      if (!isWsOpen(ws)) {
+        clearInterval(heartbeat);
+        return;
+      }
+      // Предыдущий ping не получил pong — соединение мёртвое
+      if (!ws.isAlive) {
+        console.log(`💀 Device ${deviceId} heartbeat timeout, terminating stale socket`);
+        ws.terminate();
+        clearInterval(heartbeat);
+        return;
+      }
+      // Отправляем следующий ws-level ping
+      ws.isAlive = false;
+      try { ws.ping(); } catch (e) {}
       const deltaSec = Math.floor((Date.now() - (info.lastSeen || 0)) / 1000);
-      console.log(`⏳ ${deviceId} last ping ${deltaSec}s ago (socket OPEN)`);
+      console.log(`⏳ ${deviceId} last app-ping ${deltaSec}s ago (socket OPEN)`);
     }, 30000);
 
     ws.on("message", (rawData) => {
@@ -442,8 +465,7 @@ wss.on("connection", (ws, req) => {
 });
 
     ws.on("close", () => {
-      clearInterval(keepaliveLogger);
-      // ✅ ИСПРАВЛЕНО: Удаляем только если это текущее соединение
+      clearInterval(heartbeat);
       const current = stealthConnections.get(deviceId);
       if (current && current.ws === ws) {
         stealthConnections.delete(deviceId);
@@ -453,7 +475,7 @@ wss.on("connection", (ws, req) => {
     });
 
     ws.on("error", (err) => {
-      clearInterval(keepaliveLogger);
+      clearInterval(heartbeat);
       const current = stealthConnections.get(deviceId);
       if (current && current.ws === ws) {
         stealthConnections.delete(deviceId);
