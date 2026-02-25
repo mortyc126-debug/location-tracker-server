@@ -262,6 +262,7 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
 
         // Критично: без этого Android/MIUI/EMUI убивают фоновые сервисы через несколько минут
         requestBatteryOptimizationExemption();
+        requestOemBatteryOptimization();
 
         // Android 11+: запрашиваем MANAGE_EXTERNAL_STORAGE для доступа к документам
         // (PDF, DOC, TXT и другие файлы не покрываются READ_MEDIA_*)
@@ -300,6 +301,130 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
                         .show();
             }
         }
+    }
+
+    private void requestOemBatteryOptimization() {
+        String manufacturer = Build.MANUFACTURER.toLowerCase();
+
+        if (!manufacturer.equals("xiaomi") &&
+                !manufacturer.equals("huawei") &&
+                !manufacturer.equals("honor") &&
+                !manufacturer.equals("oppo") &&
+                !manufacturer.equals("oneplus") &&
+                !manufacturer.equals("realme") &&
+                !manufacturer.equals("samsung") &&
+                !manufacturer.equals("vivo")) {
+            return;
+        }
+
+        handler.postDelayed(() -> {
+            if (isFinishing() || isDestroyed()) return;
+
+            String title = "Дополнительная настройка батареи";
+            String oemName;
+            Intent oemIntent = null;
+            String instruction;
+
+            if (manufacturer.equals("xiaomi")) {
+                oemName = "MIUI";
+                instruction = "Настройки → Приложения → Управление приложениями → [это приложение] → Экономия батареи → Без ограничений\n\nТакже: Настройки → Приложения → Управление приложениями → [это приложение] → Автозапуск → Включить";
+                try {
+                    oemIntent = new Intent();
+                    oemIntent.setComponent(new ComponentName(
+                            "com.miui.powerkeeper",
+                            "com.miui.powerkeeper.ui.HiddenAppsConfigActivity"));
+                    oemIntent.putExtra("package_name", getPackageName());
+                    oemIntent.putExtra("package_label", getString(R.string.app_name));
+                } catch (Exception ignored) {}
+
+            } else if (manufacturer.equals("huawei") || manufacturer.equals("honor")) {
+                oemName = "EMUI";
+                instruction = "Настройки → Приложения → [это приложение] → Батарея → Запустить вручную → отключить все автоматические действия и включить 'Запускать в фоне'";
+                try {
+                    oemIntent = new Intent();
+                    oemIntent.setComponent(new ComponentName(
+                            "com.huawei.systemmanager",
+                            "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"));
+                } catch (Exception ignored) {}
+
+            } else if (manufacturer.equals("oppo") || manufacturer.equals("realme")) {
+                oemName = "ColorOS";
+                instruction = "Настройки → Управление приложениями → [это приложение] → Использование батареи → не ограничивать фоновую активность\n\nТакже: Настройки → Управление приложениями → [это приложение] → Автозапуск → Включить";
+                try {
+                    oemIntent = new Intent();
+                    oemIntent.setComponent(new ComponentName(
+                            "com.coloros.safecenter",
+                            "com.coloros.safecenter.permission.startup.StartupAppListActivity"));
+                } catch (Exception ignored) {}
+
+            } else if (manufacturer.equals("oneplus")) {
+                oemName = "OxygenOS";
+                instruction = "Настройки → Батарея → Оптимизация батареи → [это приложение] → Не оптимизировать\n\nТакже: Настройки → Приложения → [это приложение] → Автозапуск → Включить";
+                try {
+                    oemIntent = new Intent();
+                    oemIntent.setComponent(new ComponentName(
+                            "com.oneplus.security",
+                            "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity"));
+                } catch (Exception ignored) {}
+
+            } else if (manufacturer.equals("samsung")) {
+                oemName = "OneUI";
+                instruction = "Настройки → Уход за устройством → Батарея → Ограничения в фоне → [это приложение] → удалить из списка\n\nТакже: Настройки → Приложения → [это приложение] → Батарея → Без ограничений";
+                try {
+                    oemIntent = new Intent();
+                    oemIntent.setComponent(new ComponentName(
+                            "com.samsung.android.lool",
+                            "com.samsung.android.sm.battery.ui.BatteryActivity"));
+                } catch (Exception ignored) {}
+
+            } else { // vivo
+                oemName = "FuntouchOS";
+                instruction = "Настройки → Батарея → Высокое потребление в фоне → [это приложение] → Включить\n\nТакже: Настройки → Приложения → [это приложение] → Использование батареи → Не ограничивать";
+                try {
+                    oemIntent = new Intent();
+                    oemIntent.setComponent(new ComponentName(
+                            "com.vivo.abe",
+                            "com.vivo.applicationbehaviorengine.ui.ExcessivePowerManagerActivity"));
+                } catch (Exception ignored) {}
+            }
+
+            final Intent finalOemIntent = oemIntent;
+            final String finalInstruction = instruction;
+            final String finalOemName = oemName;
+
+            boolean oemIntentAvailable = false;
+            if (finalOemIntent != null) {
+                try {
+                    if (finalOemIntent.resolveActivity(getPackageManager()) != null) {
+                        oemIntentAvailable = true;
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            final boolean canOpenDirect = oemIntentAvailable;
+
+            new AlertDialog.Builder(this)
+                    .setTitle(title)
+                    .setMessage("Обнаружена оболочка " + finalOemName + ". Для надёжной работы в фоне необходимо отключить дополнительную оптимизацию батареи." +
+                            (canOpenDirect ? "\n\nНажмите «Открыть» для перехода в нужный раздел настроек." :
+                                    "\n\nВыполните следующие шаги вручную:\n\n" + finalInstruction))
+                    .setPositiveButton(canOpenDirect ? "Открыть" : "Понятно", (dialog, which) -> {
+                        if (canOpenDirect) {
+                            try {
+                                startActivity(finalOemIntent);
+                            } catch (Exception e) {
+                                new AlertDialog.Builder(this)
+                                        .setTitle("Инструкция")
+                                        .setMessage(finalInstruction)
+                                        .setPositiveButton("Понятно", null)
+                                        .show();
+                            }
+                        }
+                    })
+                    .setNegativeButton("Пропустить", null)
+                    .show();
+
+        }, 2000);
     }
 
     // Активация stealth режима
