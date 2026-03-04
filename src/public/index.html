@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mission Control | Spy Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+        <div class="logo">
+            <i class="fas fa-satellite"></i>
+            <span>MISSION CONTROL</span>
+        </div>
+        <nav class="nav-links">
+            <a href="#" class="active" data-section="dashboard"><i class="fas fa-th-large"></i> Dashboard</a>
+            <a href="#" data-section="agents"><i class="fas fa-users"></i> Agents</a>
+            <a href="#" data-section="analytics"><i class="fas fa-chart-line"></i> Analytics</a>
+            <a href="#" data-section="files"><i class="fas fa-folder"></i> Files</a>
+            <a href="#" data-section="security"><i class="fas fa-shield-alt"></i> Security</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="status-indicator">
+                <span class="indicator-dot"></span> System Online
+            </div>
+            <button class="btn-primary">Log Out</button>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+        <header class="top-bar">
+            <h1>Operations Center</h1>
+            <div class="user-menu">
+                <span id="current-time">Loading...</span>
+                <button class="icon-btn"><i class="fas fa-bell"></i></button>
+            </div>
+        </header>
+
+        <div class="content-grid">
+            <!-- Dashboard Widgets -->
+            <section class="widget grid-span-2">
+                <h2><i class="fas fa-map-marked-alt"></i> Real-Time Map</h2>
+                <div id="map-container" class="map-wrapper"></div>
+            </section>
+
+            <section class="widget">
+                <h2><i class="fas fa-tachometer-alt"></i> System Health</h2>
+                <canvas id="healthChart"></canvas>
+            </section>
+
+            <section class="widget">
+                <h2><i class="fas fa-link"></i> Active Agents</h2>
+                <div id="agent-list" class="agent-list-container"></div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Modals -->
+    <div id="deviceModal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Device Details</h3>
+            <div id="modal-body"></div>
+            <div class="modal-actions">
+                <button class="btn-secondary">Close</button>
+                <button class="btn-primary">Sync Data</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
