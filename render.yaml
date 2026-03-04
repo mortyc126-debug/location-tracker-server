@@ -2,10 +2,7 @@ services:
   - type: web
     name: mission-spy-dashboard
     env: node
-    region: us-east
-    branch: main
-    plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm install
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -20,25 +17,10 @@ services:
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
-      - key: ADMIN_USER
-        sync: false
-      - key: ADMIN_PASS
-        sync: false
-      - key: ALLOWED_ORIGINS
-        sync: false
-
-  - type: postgres
-    name: spy-db
-    region: us-east
-    plan: free
-    ipAllowList: []
-    databaseName: mission_spy
-    user: postgres
-    dbVersion: 15
 
 webServices:
   - path: /
-    staticDir: public
+    staticDir: src/public
     envVars:
       - key: RENDER
         value: true
@@ -49,8 +31,3 @@ envVarKeys:
   - SECRET_KEY
   - SUPABASE_URL
   - SUPABASE_ANON_KEY
-  - ADMIN_USER
-  - ADMIN_PASS
-  - ALLOWED_ORIGINS
-  - DATABASE_URL
-  - WSS_PORT
