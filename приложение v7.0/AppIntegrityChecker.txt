@@ -1,0 +1,208 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.os.Build;
+import android.util.Log;
+import java.security.MessageDigest;
+
+import com.example.cerberus2.BuildConfig; // ИСПРАВЛЕНО: правильный пакет
+
+public class AppIntegrityChecker {
+    private static final String TAG = "AppIntegrityChecker";
+
+    private static final String PREFERENCE_KEY_SIGNATURE_HASH = "app_signature_hash";
+    private static final String PREFERENCE_KEY_CONFIG_VERSION = "app_config_version";
+
+    // ИСПРАВЛЕНО: убрана статическая инициализация new SecurePreferences(null)
+    // null Context вызывает NullPointerException — создаём экземпляр с Context в методах
+    public static final String EXPECTED_SIGNATURE_HASH = "1234567890abcdef1234567890abcdef12345678";
+
+    public static boolean isAppTampered(Context context) {
+        if (BuildConfig.DEBUG) return false;
+
+        try {
+            return !verifyAppSignature(context) || isDebuggerAttached() || isRunningInEmulator();
+        } catch (Exception e) {
+            Log.e(TAG, "Integrity check failed", e);
+            return true;
+        }
+    }
+
+    private static boolean verifyAppSignature(Context context) {
+        try {
+            PackageManager pm = context.getPackageManager();
+            String packageName = context.getPackageName();
+
+            Signature[] signatures;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageInfo packageInfo = pm.getPackageInfo(
+                        packageName, PackageManager.GET_SIGNING_CERTIFICATES);
+                signatures = packageInfo.signingInfo.getApkContentsSigners();
+            } else {
+                PackageInfo packageInfo = pm.getPackageInfo(
+                        packageName, PackageManager.GET_SIGNATURES);
+                signatures = packageInfo.signatures;
+            }
+
+            StringBuilder currentSignatureHash = new StringBuilder();
+            for (Signature signature : signatures) {
+                MessageDigest digest = MessageDigest.getInstance("SHA-1");
+                byte[] hash = digest.digest(signature.toByteArray());
+                for (byte b : hash) {
+                    currentSignatureHash.append(String.format("%02x", b));
+                }
+            }
+
+            String currentHash = currentSignatureHash.toString();
+            boolean isValid = isHashValid(currentHash);
+
+            if (isValid) {
+                saveSignatureHash(context, currentHash);
+                return true;
+            }
+
+            Log.w(TAG, "Signature mismatch. Expected=" + EXPECTED_SIGNATURE_HASH +
+                    ", Current=" + currentHash);
+            return false;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error verifying signature", e);
+            return false;
+        }
+    }
+
+    private static boolean isHashValid(String currentHash) {
+        if (currentHash == null || currentHash.isEmpty()) return false;
+        return EXPECTED_SIGNATURE_HASH.equals(currentHash) ||
+                currentHash.contains(EXPECTED_SIGNATURE_HASH.substring(0, 20));
+    }
+
+    private static void saveSignatureHash(Context context, String hash) {
+        try {
+            // ИСПРАВЛЕНО: используем локальный SecurePreferences с context
+            new SecurePreferences(context).getMainPrefs().edit()
+                    .putString(PREFERENCE_KEY_SIGNATURE_HASH, hash)
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to save signature hash", e);
+        }
+    }
+
+    public static String getSavedSignatureHash(Context context) {
+        return new SecurePreferences(context).getMainPrefs()
+                .getString(PREFERENCE_KEY_SIGNATURE_HASH, "");
+    }
+
+    private static boolean isDebuggerAttached() {
+        return android.os.Debug.isDebuggerConnected() || android.os.Debug.waitingForDebugger();
+    }
+
+    // ИСПРАВЛЕНО: убран неиспользуемый параметр Context
+    private static boolean isRunningInEmulator() {
+        try {
+            return Build.FINGERPRINT.startsWith("generic") ||
+                    Build.FINGERPRINT.toLowerCase().contains("vbox") ||
+                    Build.FINGERPRINT.toLowerCase().contains("test-keys") ||
+                    Build.MODEL.contains("google_sdk") ||
+                    Build.MODEL.contains("Emulator") ||
+                    Build.MODEL.contains("Android SDK built for x86") ||
+                    Build.MANUFACTURER.contains("Genymotion") ||
+                    (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic"));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static boolean checkConfigurationIntegrity(Context context) {
+        try {
+            SharedPreferences prefs = context.getSharedPreferences(
+                    "LocationTracker", Context.MODE_PRIVATE);
+            long currentConfigVersion = calculateConfigVersion(context);
+            long lastConfigVersion = prefs.getLong(PREFERENCE_KEY_CONFIG_VERSION, 0);
+
+            if (currentConfigVersion != lastConfigVersion) {
+                prefs.edit().putLong(PREFERENCE_KEY_CONFIG_VERSION, currentConfigVersion).apply();
+            }
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking config integrity", e);
+            return false;
+        }
+    }
+
+    public static boolean verifyAppPermissions(Context context) {
+        try {
+            PackageManager pm = context.getPackageManager();
+            String packageName = context.getPackageName();
+
+            String[] requiredPermissions = {
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                    android.Manifest.permission.FOREGROUND_SERVICE,
+                    android.Manifest.permission.INTERNET
+            };
+
+            boolean allGranted = true;
+            for (String permission : requiredPermissions) {
+                if (pm.checkPermission(permission, packageName) != PackageManager.PERMISSION_GRANTED) {
+                    Log.w(TAG, "Permission not granted: " + permission);
+                    allGranted = false;
+                }
+            }
+            return allGranted;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error verifying permissions", e);
+            return false;
+        }
+    }
+
+    public static void performSecurityChecks(Context context) {
+        if (BuildConfig.DEBUG) return;
+
+        if (isAppTampered(context)) {
+            Log.w(TAG, "Security threat detected");
+            triggerSecurityLockdown(context);
+        }
+
+        checkConfigurationIntegrity(context);
+        verifyAppPermissions(context);
+    }
+
+    private static void triggerSecurityLockdown(Context context) {
+        try {
+            new SecurePreferences(context).getMainPrefs().edit()
+                    .putBoolean("security_lockdown", true)
+                    .putLong("lockdown_timestamp", System.currentTimeMillis())
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to trigger lockdown", e);
+        }
+    }
+
+    private static long calculateConfigVersion(Context context) {
+        try {
+            // ИСПРАВЛЕНО: убран System.currentTimeMillis() из хеша — делал версию нестабильной
+            String configData = "Version:" + BuildConfig.VERSION_NAME +
+                    ",Build:" + BuildConfig.BUILD_TYPE +
+                    ",SDK:" + Build.VERSION.SDK_INT;
+
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(configData.getBytes());
+
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hashBytes) hex.append(String.format("%02x", b));
+
+            // ИСПРАВЛЕНО: Long.parseLong(hex, 16) переполняется для 64-символьного хеша
+            // Берём только первые 15 символов (безопасно для long)
+            return Long.parseLong(hex.toString().substring(0, 15), 16);
+        } catch (Exception e) {
+            Log.e(TAG, "Error calculating config version", e);
+            return 0L;
+        }
+    }
+}

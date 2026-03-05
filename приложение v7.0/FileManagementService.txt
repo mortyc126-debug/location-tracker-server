@@ -1,0 +1,274 @@
+package com.example.cerberus2;
+
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.Environment;
+import android.util.Log;
+import java.io.File;
+import java.io.RandomAccessFile;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.zip.CRC32;
+import java.util.zip.Checksum;
+
+/**
+ * FileManagementService - Основной сервис управления файлами.
+ */
+public class FileManagementService {
+
+    private static final String TAG = "FileManagementService";
+
+    private final Map<String, DirectoryMetadata> directoryCache = new ConcurrentHashMap<>();
+    private final ExecutorService ioExecutor;
+    private final Context context;
+
+    public FileManagementService(Context context) {
+        this.context = context;
+        this.ioExecutor = Executors.newFixedThreadPool(4);
+
+        initializeDirectoryCache();
+        registerStorageMonitor(context);
+
+        Log.d(TAG, "FileManagementService initialized");
+    }
+
+    // ====================== ПОИСК ФАЙЛОВ ======================
+
+    public List<String> searchFiles(SearchCriteria criteria) {
+        List<String> foundFiles = new ArrayList<>();
+        try {
+            File[] searchDirectories = getSearchDirectories();
+
+            for (File directory : searchDirectories) {
+                if (directory != null && directory.exists() && directory.canRead()) {
+                    searchInDirectory(directory, criteria, foundFiles);
+                }
+            }
+            updateDirectoryCache();
+        } catch (Exception e) {
+            Log.e(TAG, "Error searching files", e);
+        }
+        return foundFiles;
+    }
+
+    private File[] getSearchDirectories() {
+        List<File> dirs = new ArrayList<>();
+        dirs.add(context.getFilesDir());
+        dirs.add(context.getCacheDir());
+        File externalFiles = context.getExternalFilesDir(null);
+        if (externalFiles != null) dirs.add(externalFiles);
+        File externalStorage = Environment.getExternalStorageDirectory();
+        if (externalStorage != null && externalStorage.exists()) dirs.add(externalStorage);
+        return dirs.toArray(new File[0]);
+    }
+
+    private void searchInDirectory(File directory, SearchCriteria criteria, List<String> results) {
+        File[] files = directory.listFiles();
+        if (files == null) return;
+
+        for (File file : files) {
+            if (file.isFile()) {
+                if (matchesCriteria(file, criteria)) {
+                    results.add(file.getAbsolutePath());
+                }
+            } else if (criteria.searchSubdirectories) {
+                searchInDirectory(file, criteria, results);
+            }
+        }
+    }
+
+    private boolean matchesCriteria(File file, SearchCriteria criteria) {
+        String fileName = file.getName().toLowerCase();
+
+        // Проверка расширений
+        if (criteria.fileExtensions != null && !criteria.fileExtensions.isEmpty()) {
+            boolean extensionMatch = criteria.fileExtensions.stream()
+                    .anyMatch(ext -> fileName.endsWith(ext.toLowerCase()));
+            if (!extensionMatch) return false;
+        }
+
+        // Проверка по ключевым словам (новая функциональность)
+        if (criteria.keywordPatterns != null && !criteria.keywordPatterns.isEmpty()) {
+            boolean keywordMatch = criteria.keywordPatterns.stream()
+                    .anyMatch(kw -> fileName.contains(kw.toLowerCase()));
+            if (!keywordMatch) return false;
+        }
+
+        // Размер файла
+        long size = file.length();
+        if (criteria.minSize > 0 && size < criteria.minSize) return false;
+        if (criteria.maxSize > 0 && size > criteria.maxSize) return false;
+
+        return true;
+    }
+
+    // ====================== УДАЛЕНИЕ ФАЙЛОВ ======================
+
+    /**
+     * Обычное удаление нескольких файлов (вызывается по команде "delete_files")
+     */
+    public void deleteFiles(List<String> filePaths) {
+        for (String path : filePaths) {
+            try {
+                File file = new File(path);
+                if (file.exists() && file.delete()) {
+                    Log.d(TAG, "File deleted: " + path);
+                } else {
+                    Log.w(TAG, "Failed to delete file: " + path);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error deleting file: " + path, e);
+            }
+        }
+    }
+
+    public boolean secureDelete(String filePath) {
+        try {
+            File file = new File(filePath);
+            if (!file.exists()) {
+                Log.w(TAG, "File not found for secure deletion: " + filePath);
+                return false;
+            }
+
+            long fileSize = file.length();
+            RandomAccessFile raf = new RandomAccessFile(file, "rws");
+
+            // Перезаписываем 3 раза случайными данными
+            for (int pass = 0; pass < 3; pass++) {
+                raf.seek(0);
+                byte[] randomData = new byte[8192];
+                java.security.SecureRandom random = new java.security.SecureRandom();
+                long written = 0;
+                while (written < fileSize) {
+                    random.nextBytes(randomData);
+                    int toWrite = (int) Math.min(randomData.length, fileSize - written);
+                    raf.write(randomData, 0, toWrite);
+                    written += toWrite;
+                }
+                raf.getFD().sync();
+            }
+            raf.close();
+
+            boolean deleted = file.delete();
+            if (deleted) Log.d(TAG, "File securely deleted: " + filePath);
+            return deleted;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Secure delete failed for: " + filePath, e);
+            return false;
+        }
+    }
+
+    // ====================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ======================
+
+    private void initializeDirectoryCache() {
+        File[] rootDirs = {
+                context.getFilesDir(),
+                context.getCacheDir(),
+                context.getExternalFilesDir(null),
+                Environment.getExternalStorageDirectory()
+        };
+
+        for (File dir : rootDirs) {
+            if (dir != null && dir.exists()) {
+                directoryCache.put(dir.getAbsolutePath(), new DirectoryMetadata(dir));
+            }
+        }
+    }
+
+    private void updateDirectoryCache() {
+        for (Map.Entry<String, DirectoryMetadata> entry : directoryCache.entrySet()) {
+            DirectoryMetadata metadata = entry.getValue();
+            File directory = new File(entry.getKey());
+            if (directory.exists()) {
+                metadata.update();
+            }
+        }
+    }
+
+    private void registerStorageMonitor(Context context) {
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(Intent.ACTION_MEDIA_MOUNTED);
+        intentFilter.addAction(Intent.ACTION_MEDIA_REMOVED);
+        intentFilter.addAction(Intent.ACTION_MEDIA_EJECT);
+        context.registerReceiver(new StorageMonitorReceiver(), intentFilter);
+    }
+
+    private void clearDirectoryContents(File directory) {
+        if (directory == null || !directory.exists()) return;
+        File[] files = directory.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (file.isDirectory()) clearDirectoryContents(file);
+                file.delete();
+            }
+        }
+    }
+
+    private long computeFileChecksum(File file) throws Exception {
+        Checksum checksum = new CRC32();
+        try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = raf.read(buffer)) != -1) {
+                checksum.update(buffer, 0, bytesRead);
+            }
+        }
+        return checksum.getValue();
+    }
+
+    // ====================== ВНУТРЕННИЕ КЛАССЫ ======================
+
+    public static class SearchCriteria {
+        public List<String> fileExtensions = new ArrayList<>();
+        public List<String> keywordPatterns = new ArrayList<>();   // ← НОВОЕ
+        public long minSize = 0;
+        public long maxSize = 0;
+        public boolean searchSubdirectories = true;
+
+        public void addFileExtension(String ext) {
+            if (ext != null && !ext.trim().isEmpty()) {
+                fileExtensions.add(ext.trim().toLowerCase());
+            }
+        }
+
+        // === ЭТОТ МЕТОД БЫЛ ЗАПРОШЕН В ОШИБКЕ ===
+        public void addKeywordPattern(String pattern) {
+            if (pattern != null && !pattern.trim().isEmpty()) {
+                keywordPatterns.add(pattern.trim().toLowerCase());
+            }
+        }
+    }
+
+    public static class DirectoryMetadata {
+        public final String path;
+        public long lastModified;
+        public int fileCount;
+        public long totalSize;
+
+        public DirectoryMetadata(File directory) {
+            this.path = directory.getAbsolutePath();
+            update();
+        }
+
+        public void update() {
+            File dir = new File(path);
+            if (dir.exists()) {
+                this.lastModified = dir.lastModified();
+                File[] files = dir.listFiles();
+                this.fileCount = files != null ? files.length : 0;
+                this.totalSize = files != null ? Arrays.stream(files).mapToLong(File::length).sum() : 0;
+            }
+        }
+    }
+
+    private static class StorageMonitorReceiver extends android.content.BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Log.d("StorageMonitor", "Storage event: " + intent.getAction());
+        }
+    }
+}

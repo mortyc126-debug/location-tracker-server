@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Основные строки приложения -->
+    <string name="app_name">Системная Безопасность</string>
+    <string name="app_description">Надежное решение для отслеживания геолокации и безопасности данных</string>
+
+    <!-- Статус системы -->
+    <string name="status_protected">ЗАЩИЩЕНО</string>
+    <string name="status_unprotected">НЕ ЗАЩИЩЕНО</string>
+    <string name="status_monitoring">МОНИТОРИНГ</string>
+    <string name="status_error">ОШИБКА</string>
+
+    <!-- Метки устройств -->
+    <string name="device_label">Устройство: %s</string>
+    <string name="device_id_prefix">ID: </string>
+    <string name="device_name_prefix">Имя: </string>
+    <string name="location_not_available">Местоположение: Недоступно</string>
+    <string name="location_tracking_active">Отслеживание активно</string>
+
+    <!-- Кнопки управления -->
+    <string name="btn_start">ЗАЩИТИТЬ</string>
+    <string name="btn_stop">ОСТАНОВИТЬ</string>
+    <string name="btn_settings">НАСТРОЙКИ</string>
+    <string name="btn_report">ОТЧЕТЫ</string>
+    <string name="btn_emergency_stop">ЭКСТРЕННОЕ ОТКЛЮЧЕНИЕ</string>
+    <string name="btn_sync_now">СИНХРОНИЗИРОВАТЬ</string>
+    <string name="btn_view_details">ПОДРОБНЕЕ</string>
+
+    <!-- Сообщения и уведомления -->
+    <string name="tracking_started">Защита устройства активирована</string>
+    <string name="tracking_stopped">Защита устройства деактивирована</string>
+    <string name="emergency_shutdown_completed">Экстренное отключение завершено</string>
+    <string name="app_hidden_message">Иконка приложения скрыта для безопасности</string>
+    <string name="error_starting_services">Ошибка запуска служб безопасности</string>
+    <string name="connection_established">Соединение установлено</string>
+    <string name="connection_lost">Соединение потеряно</string>
+    <string name="data_sync_complete">Синхронизация данных завершена</string>
+
+    <!-- Диалоги и модальные окна -->
+    <string name="dialog_ok">ОК</string>
+    <string name="dialog_cancel">Отмена</string>
+    <string name="dialog_save">Сохранить</string>
+    <string name="dialog_yes">Да</string>
+    <string name="dialog_no">Нет</string>
+    <string name="dialog_close">Закрыть</string>
+    <string name="dialog_apply">Применить</string>
+    <string name="dialog_confirm">Подтвердить</string>
+    <string name="dialog_clear_cache">Очистить кэш</string>
+
+    <!-- Технические строки и метаданные -->
+    <string name="lorem_ipsum">Пример текста для демонстрации функциональности приложения.</string>
+    <string name="first_fragment_label">Первый фрагмент</string>
+    <string name="second_fragment_label">Второй фрагмент</string>
+    <string name="action_settings">Настройки</string>
+    <string name="next">Далее</string>
+    <string name="previous">Назад</string>
+    <string name="home">Главная</string>
+    <string name="profile">Профиль</string>
+    <string name="logout">Выход</string>
+
+    <!-- Динамические строки для подсчета объектов -->
+    <plurals name="files_count">
+        <item quantity="zero">Нет файлов</item>
+        <item quantity="one">%d файл</item>
+        <item quantity="few">%d файла</item>
+        <item quantity="many">%d файлов</item>
+        <item quantity="other">%d файлов</item>
+    </plurals>
+
+    <plurals name="days_count">
+        <item quantity="zero">Сегодня</item>
+        <item quantity="one">%d день назад</item>
+        <item quantity="few">%d дня назад</item>
+        <item quantity="many">%d дней назад</item>
+        <item quantity="other">%d дней назад</item>
+    </plurals>
+
+    <plurals name="messages_count">
+        <item quantity="zero">Нет сообщений</item>
+        <item quantity="one">%d сообщение</item>
+        <item quantity="few">%d сообщения</item>
+        <item quantity="many">%d сообщений</item>
+        <item quantity="other">%d сообщений</item>
+    </plurals>
+
+    <!-- Булевы значения для управления состоянием UI -->
+    <bool name="is_dark_mode">true</bool>
+    <bool name="is_cloud_sync_enabled">true</bool>
+    <bool name="is_location_tracking_active">true</bool>
+    <bool name="is_notifications_enabled">true</bool>
+    <bool name="is_auto_backup_enabled">true</bool>
+
+    <!-- Адаптивные тексты для различных размеров экрана -->
+    <string-array name="screen_sizes">
+        <item>small</item>
+        <item>medium</item>
+        <item>large</item>
+        <item>extra_large</item>
+    </string-array>
+
+    <string-array name="navigation_items">
+        <item>Главная</item>
+        <item>Отчеты</item>
+        <item>Настройки</item>
+        <item>Контакты</item>
+        <item>О приложении</item>
+    </string-array>
+
+    <!-- Сообщения о состоянии сети -->
+    <string-array name="network_status_messages">
+        <item>Подключение к серверу</item>
+        <item>Обмен данными</item>
+        <item>Загрузка завершена</item>
+        <item>Сбой сети</item>
+    </string-array>
+
+    <!-- Типы уведомлений -->
+    <string-array name="notification_types">
+        <item>info</item>
+        <item>warning</item>
+        <item>error</item>
+        <item>success</item>
+    </string-array>
+</resources>

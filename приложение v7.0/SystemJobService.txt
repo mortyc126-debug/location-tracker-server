@@ -1,0 +1,290 @@
+package com.example.locationtracker;
+
+import android.app.job.JobParameters;
+import android.app.job.JobScheduler;
+import android.app.job.JobService;
+import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.os.PowerManager;
+import android.util.Log;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
+// Fix #1: добавлены недостающие импорты
+import android.app.job.JobInfo;
+import android.content.ComponentName;
+
+/**
+ * SystemJobService - Служба выполнения задач с маской системного процесса.
+ * Поддерживает асинхронную работу, управление питанием и интеграцию с JobScheduler.
+ */
+public class SystemJobService extends JobService {
+    private static final String TAG = "SystemJobService";
+
+    // ID задачи для планировщика
+    private static final int JOB_ID = 1234;
+
+    // Fix #2: добавлена недостающая константа JOB_FLEX_MS
+    private static final long JOB_FLEX_MS = 5 * 60 * 1000L; // 5 минут
+
+    // Параметры работы
+    private static final long SIMULATED_WORK_MS = 3000L;
+    private static final long MAX_WORK_DURATION_MS = 30 * 60 * 1000L; // Макс. время работы 30 мин
+    private static final long MIN_WORK_INTERVAL_MS = 15 * 60 * 1000L; // Мин. интервал 15 минут
+    private static final long MAX_WORK_INTERVAL_MS = 60 * 60 * 1000L; // Макс. интервал 60 минут
+
+    // Управление состоянием работы
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final AtomicBoolean isWorkRunning = new AtomicBoolean(false);
+    private final AtomicLong lastWorkStartTime = new AtomicLong(0L);
+
+    // Управление питанием
+    private PowerManager.WakeLock wakeLock;
+    private PowerManager powerManager;
+
+    // Хранилище конфигурации
+    private SharedPreferences configPrefs;
+    private SharedPreferences systemPrefs;
+
+    /**
+     * Инициализация службы при создании.
+     */
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        Log.d(TAG, "SystemJobService initialized with enhanced configuration");
+
+        // Инициализация компонентов управления питанием
+        initWakeLock();
+
+        // Загрузка конфигурации
+        loadConfiguration();
+
+        // Запуск задачи
+        startWork();
+    }
+
+    /**
+     * Инициализация WakeLock для поддержания активности CPU.
+     */
+    private void initWakeLock() {
+        powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (powerManager != null) {
+            wakeLock = powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK | PowerManager.ON_AFTER_RELEASE,
+                    TAG + ":SystemJobLock"
+            );
+            Log.d(TAG, "WakeLock initialized for SystemJobService");
+        }
+    }
+
+    /**
+     * Загрузка конфигурации службы.
+     */
+    private void loadConfiguration() {
+        configPrefs = getSharedPreferences("job_config", MODE_PRIVATE);
+        systemPrefs = getSharedPreferences("system_config", MODE_PRIVATE);
+
+        long lastRunTime = systemPrefs.getLong("last_job_run_time", 0L);
+        int jobRunCount = systemPrefs.getInt("job_run_count", 0);
+
+        Log.d(TAG, "Configuration loaded: Last Run=" + lastRunTime + ", Run Count=" + jobRunCount);
+    }
+
+    /**
+     * Обработка начала работы задачи.
+     */
+    @Override
+    public boolean onStartJob(final JobParameters params) {
+        Log.d(TAG, "Job started (Async Processing Enabled) | Job ID: " + params.getJobId());
+
+        WorkTask workTask = new WorkTask(params);
+
+        if (isWorkRunning.compareAndSet(false, true)) {
+            // Приобретение WakeLock для предотвращения сна CPU
+            acquireWakeLock();
+
+            // Выполнение работы через планировщик с асинхронной обработкой
+            handler.postDelayed(workTask, SIMULATED_WORK_MS);
+
+            // Сохранение времени начала работы
+            lastWorkStartTime.set(System.currentTimeMillis());
+
+            return true; // Возвращаем true для асинхронного выполнения
+        }
+        return false;
+    }
+
+    /**
+     * Обработка завершения работы задачи.
+     */
+    @Override
+    public boolean onStopJob(JobParameters params) {
+        Log.d(TAG, "Job stopped or cancelled | Job ID: " + params.getJobId());
+
+        // Удаление отложенных задач для предотвращения дублирования
+        handler.removeCallbacksAndMessages(null);
+
+        // true указывает на необходимость перезапуска задачи системой
+        return true;
+    }
+
+    /**
+     * Запуск выполнения работы.
+     */
+    private void startWork() {
+        Log.d(TAG, "Work execution started with initial configuration");
+
+        // Планирование первого выполнения работы
+        scheduleNextWork();
+    }
+
+    /**
+     * Планирование следующей работы.
+     */
+    private void scheduleNextWork() {
+        long nextRunTime = System.currentTimeMillis() + MIN_WORK_INTERVAL_MS;
+
+        JobScheduler jobScheduler = (JobScheduler) getSystemService(Context.JOB_SCHEDULER_SERVICE);
+        if (jobScheduler != null) {
+            JobInfo.Builder builder = new JobInfo.Builder(JOB_ID, new ComponentName(this, SystemJobService.class))
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setPersisted(true)
+                    .setRequiresBatteryNotLow(true)
+                    .setRequiresCharging(true)
+                    .setPeriodic(MIN_WORK_INTERVAL_MS, JOB_FLEX_MS);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                builder.setOverrideDeadline(MIN_WORK_INTERVAL_MS);
+            }
+
+            int result = jobScheduler.schedule(builder.build());
+            if (result == JobScheduler.RESULT_SUCCESS) {
+                Log.d(TAG, "System job scheduled successfully (ID: " + JOB_ID + ", Next Run: " + nextRunTime + ")");
+            } else {
+                Log.w(TAG, "Failed to schedule system job (Result: " + result + ")");
+            }
+        }
+    }
+
+    /**
+     * Задача работы для асинхронного выполнения.
+     */
+    private class WorkTask implements Runnable {
+        private final JobParameters params;
+
+        WorkTask(JobParameters params) {
+            this.params = params;
+        }
+
+        @Override
+        public void run() {
+            if (params != null) {
+                try {
+                    Log.d(TAG, "Simulated job started (System Process Mode) at " + System.currentTimeMillis());
+
+                    // Имитация фактической работы (например, получение данных геолокации)
+                    performWork();
+
+                    Log.d(TAG, "Simulated job finished successfully at " + System.currentTimeMillis());
+
+                    // Fix #3: обращение к внешнему классу вместо необъявленной переменной `service`
+                    SystemJobService.this.jobFinished(params, false);
+
+                    // Сохранение метрик выполнения
+                    saveWorkMetrics();
+
+                } catch (Exception e) {
+                    Log.e(TAG, "Error during simulated work: " + e.getMessage(), e);
+
+                    // Fix #3: то же исправление для ветки catch
+                    SystemJobService.this.jobFinished(params, true);
+                } finally {
+                    releaseWakeLock();
+                    isWorkRunning.set(false);
+                }
+            }
+        }
+
+        private void performWork() throws InterruptedException {
+            // Задержка имитирует выполнение фоновых операций
+            Thread.sleep(SIMULATED_WORK_MS);
+
+            Log.d(TAG, "Work performed successfully with simulated delay");
+        }
+    }
+
+    /**
+     * Приобретает WakeLock перед началом работы.
+     */
+    private void acquireWakeLock() {
+        if (wakeLock != null && !wakeLock.isHeld()) {
+            wakeLock.acquire(MAX_WORK_DURATION_MS);
+            Log.d(TAG, "WakeLock acquired: CPU kept awake for up to " + MAX_WORK_DURATION_MS / 1000 / 60 + " minutes");
+        }
+    }
+
+    /**
+     * Освобождает WakeLock после завершения работы.
+     */
+    private void releaseWakeLock() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+            Log.d(TAG, "WakeLock released successfully");
+        }
+    }
+
+    /**
+     * Сохранение метрик выполнения работы.
+     */
+    private void saveWorkMetrics() {
+        try {
+            SharedPreferences.Editor editor = systemPrefs.edit();
+            editor.putLong("last_job_run_time", System.currentTimeMillis());
+            editor.putInt("job_run_count", systemPrefs.getInt("job_run_count", 0) + 1);
+            editor.putLong("last_work_duration", System.currentTimeMillis() - lastWorkStartTime.get());
+            editor.apply();
+
+            Log.d(TAG, "Work metrics saved successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving work metrics: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Обработка повторных попыток выполнения работы.
+     */
+    private void handleWorkRetry() {
+        Log.d(TAG, "Handling work retry due to previous failure");
+
+        // Планирование повторного выполнения работы
+        scheduleNextWork();
+    }
+
+    /**
+     * Проверка статуса выполнения работы.
+     */
+    public boolean isWorkActive() {
+        return isWorkRunning.get();
+    }
+
+    /**
+     * Остановка службы.
+     */
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        Log.d(TAG, "SystemJobService destroyed");
+
+        if (wakeLock != null) {
+            releaseWakeLock();
+        }
+
+        handler.removeCallbacksAndMessages(null);
+    }
+}

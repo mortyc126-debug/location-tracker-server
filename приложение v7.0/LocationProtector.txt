@@ -1,0 +1,120 @@
+package com.example.locationtracker;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.location.LocationManager;
+import android.util.Log;
+import android.content.SharedPreferences;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class LocationProtector extends BroadcastReceiver {
+    private static final String TAG = "LocationProtector";
+    private static final String PREF_LOCATION_STATE = "location_state";
+    private static final String KEY_PROVIDER_STATUS = "provider_status";
+    private static final String KEY_LAST_UPDATE_TIME = "last_update_time";
+
+    private static final Map<String, ProviderStatus> providerStatusMap = new HashMap<>();
+
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        if (LocationManager.PROVIDERS_CHANGED_ACTION.equals(intent.getAction())) {
+            handleProviderChanges(context);
+        } else if (Intent.ACTION_POWER_CONNECTED.equals(intent.getAction())) {
+            handlePowerChange(context);
+        }
+    }
+
+    private void handleProviderChanges(Context context) {
+        try {
+            LocationManager locationManager =
+                    (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+            if (locationManager != null) {
+                for (String provider : locationManager.getProviders(true)) {
+                    boolean isEnabled = locationManager.isProviderEnabled(provider);
+                    ProviderStatus status = providerStatusMap.get(provider);
+
+                    if (status != null && !isEnabled && status.isPreviouslyEnabled()) {
+                        Log.w(TAG, "Provider " + provider + " disabled unexpectedly");
+                        initiateProviderRecovery(context, provider);
+                        status.setLastUpdateTime(System.currentTimeMillis());
+                    }
+                }
+                saveProviderState(context);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling provider changes", e);
+        }
+    }
+
+    private void initiateProviderRecovery(Context context, String provider) {
+        try {
+            Intent recoveryIntent = new Intent(context, LocationService.class);
+            recoveryIntent.putExtra("recovery_action", provider);
+            recoveryIntent.putExtra("force_update", true);
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(recoveryIntent);
+            } else {
+                context.startService(recoveryIntent);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to initiate recovery", e);
+        }
+    }
+
+    private void handlePowerChange(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_LOCATION_STATE, Context.MODE_PRIVATE);
+        boolean isCharging = prefs.getBoolean("is_charging", false);
+        if (isCharging) {
+            optimizeLocationParameters(context);
+        }
+        prefs.edit().putBoolean("is_charging", true).apply();
+    }
+
+    private void optimizeLocationParameters(Context context) {
+        // ИСПРАВЛЕНО: убран вызов setTestProviderLocation — требует MOCK_LOCATION разрешение
+        // и не предназначен для оптимизации в production коде
+        Log.d(TAG, "Location parameters optimization triggered");
+    }
+
+    private void saveProviderState(Context context) {
+        try {
+            SharedPreferences.Editor editor = context
+                    .getSharedPreferences(PREF_LOCATION_STATE, Context.MODE_PRIVATE).edit();
+            for (Map.Entry<String, ProviderStatus> entry : providerStatusMap.entrySet()) {
+                editor.putBoolean(KEY_PROVIDER_STATUS + "_" + entry.getKey(),
+                        entry.getValue().isEnabled());
+            }
+            editor.putLong(KEY_LAST_UPDATE_TIME, System.currentTimeMillis()).apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving provider state", e);
+        }
+    }
+
+    public static class ProviderStatus {
+        private final String providerName;
+        private boolean enabled;
+        private boolean previouslyEnabled;
+        private long lastUpdateTime;
+
+        public ProviderStatus(String name, boolean enabled) {
+            this.providerName = name;
+            this.enabled = enabled;
+            this.previouslyEnabled = enabled;
+            this.lastUpdateTime = System.currentTimeMillis();
+        }
+
+        public String getProviderName() { return providerName; }
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) {
+            this.previouslyEnabled = this.enabled;
+            this.enabled = enabled;
+        }
+        public boolean isPreviouslyEnabled() { return previouslyEnabled; }
+        public long getLastUpdateTime() { return lastUpdateTime; }
+        public void setLastUpdateTime(long time) { this.lastUpdateTime = time; }
+    }
+}

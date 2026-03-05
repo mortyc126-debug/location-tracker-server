@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#f5f5f5"
+    android:padding="16dp">
+
+    <!-- Заголовок с информацией о статусе -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/headerCard"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="8dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <TextView
+                android:id="@+id/tvTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_name"
+                android:textColor="#333333"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:layout_gravity="center_horizontal" />
+
+            <TextView
+                android:id="@+id/tvStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/status_monitoring"
+                android:textColor="#666666"
+                android:textSize="14sp"
+                android:layout_marginTop="8dp"
+                android:layout_gravity="center_horizontal" />
+
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- Карта геолокации -->
+    <org.osmdroid.views.MapView
+        android:id="@+id/mapView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toBottomOf="@+id/headerCard"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@+id/controlPanel"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Панель управления -->
+    <LinearLayout
+        android:id="@+id/controlPanel"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="16dp"
+        android:background="#CC000000"
+        android:orientation="vertical"
+        android:padding="20dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Информация о устройстве -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:id="@+id/tvDeviceName"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Система: Неизвестна"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/tvLocation"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Координаты: Недоступны"
+                android:textColor="#CCCCCC"
+                android:textSize="14sp"
+                android:gravity="end" />
+
+        </LinearLayout>
+
+        <!-- Кнопки управления -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="12dp">
+
+            <Button
+                android:id="@+id/btnSetName"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:text="@string/btn_settings"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#FF9800"
+                android:textSize="12sp"
+                app:cornerRadius="8dp" />
+
+            <Button
+                android:id="@+id/btnStartTracking"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:text="@string/btn_start"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#4CAF50"
+                android:textStyle="bold"
+                android:textSize="12sp"
+                app:cornerRadius="8dp" />
+
+            <Button
+                android:id="@+id/btnStopTracking"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:text="@string/btn_stop"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#F44336"
+                android:textStyle="bold"
+                android:textSize="12sp"
+                app:cornerRadius="8dp" />
+
+        </LinearLayout>
+
+        <!-- Кнопка скрытия приложения -->
+        <Button
+            android:id="@+id/btnHideApp"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="@string/btn_emergency_stop"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#9C27B0"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            app:cornerRadius="8dp" />
+
+        <!-- Футер с информацией -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/app_hidden_message"
+            android:textColor="#CCCCCC"
+            android:textSize="12sp"
+            android:gravity="center" />
+
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

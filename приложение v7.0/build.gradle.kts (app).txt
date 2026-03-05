@@ -1,0 +1,112 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
+    id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
+}
+
+android {
+    namespace = "com.example.cerberus2"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.example.cerberus2"
+        minSdk = 23
+        targetSdk = 35
+        versionCode = 2
+        versionName = "1.1.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "SERVER_URL", "\"https://location-tracker-server-micv.onrender.com/api/location\"")
+        buildConfigField("String", "API_KEY", "\"516b71880a0950444e814378dd302da44a0712e5b8c85d80231805a5d2940301\"")
+        buildConfigField("String", "APP_VERSION", "\"1.1.0\"")
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            buildConfigField("Boolean", "DEBUG", "false")
+        }
+        debug {
+            buildConfigField("Boolean", "DEBUG", "true")
+            applicationIdSuffix = ".debug"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig = true
+        dataBinding = true
+        viewBinding = true
+        compose = true
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+        freeCompilerArgs = listOf(
+            "-opt-in=kotlin.RequiresOptIn",
+            "-Xcontext-receivers"
+        )
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+}
+
+dependencies {
+    // Android Core
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+
+    // Google Play Services
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-maps:19.0.0")
+
+    // Networking & Serialization
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    implementation("com.squareup.retrofit2:retrofit:2.11.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+    implementation("com.squareup.retrofit2:converter-scalars:2.11.0")
+
+    // Kotlin Serialization
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3")
+
+    // Lifecycle & ViewModel
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+
+    // WorkManager
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
+
+    // Security & Database
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
+
+    // UI Components
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
+    implementation("androidx.core:core-ktx:1.15.0")
+
+    // Testing
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+}

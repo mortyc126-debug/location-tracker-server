@@ -1,0 +1,244 @@
+package com.example.locationtracker;
+
+import android.app.job.JobInfo;
+import android.app.job.JobScheduler;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.os.PowerManager;
+import android.util.Log;
+
+// ИСПРАВЛЕНО: убраны неиспользуемые импорты JobStatus, Intent, HashSet, Set (не используются)
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
+public class SystemMasker {
+    private static final String TAG = "SystemMasker";
+
+    private static final int JOB_ID = 1234;
+
+    private static final long JOB_INTERVAL_MS = 15 * 60 * 1000L;
+    private static final long JOB_FLEX_MS = 5 * 60 * 1000L;
+    private static final long JOB_MAX_EXECUTION_TIME_MS = 30 * 60 * 1000L;
+
+    private static volatile boolean isSchedulerActive = false;
+    // ИСПРАВЛЕНО: new AtomicBoolean(true) — не static volatile AtomicBoolean, просто static final
+    private static final AtomicBoolean isOEMOptimized = new AtomicBoolean(true);
+    private static final AtomicLong lastJobExecutionTime = new AtomicLong(0L);
+
+    private static final String PREF_JOB_STATE = "system_job_state";
+    private static final String KEY_JOB_ENABLED = "job_enabled";
+    private static final String KEY_OEM_COMPATIBILITY = "oem_compatibility";
+    private static final String KEY_LAST_EXECUTION = "last_execution_time";
+
+    public static void scheduleSystemJob(Context context) {
+        try {
+            ComponentName component = new ComponentName(context, SystemJobService.class);
+
+            JobInfo.Builder builder = new JobInfo.Builder(JOB_ID, component)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setPersisted(true)
+                    .setRequiresBatteryNotLow(true)
+                    .setRequiresCharging(true);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                builder.setPeriodic(JOB_INTERVAL_MS, JOB_FLEX_MS);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // ИСПРАВЛЕНО: setOverrideDeadline несовместим с setPeriodic — убран
+                    // (вызывает IllegalArgumentException при совместном использовании)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        builder.setRequiresBatteryNotLow(true);
+                    }
+                }
+            }
+
+            JobInfo optimizedJob = ensureOEMCompatibility(context, builder.build());
+
+            JobScheduler jobScheduler =
+                    (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
+            if (jobScheduler != null) {
+                jobScheduler.cancel(JOB_ID);
+
+                int result = jobScheduler.schedule(optimizedJob);
+                if (result == JobScheduler.RESULT_SUCCESS) {
+                    Log.d(TAG, "System job scheduled (ID: " + JOB_ID + ")");
+                    ensureSystemCompatibility(context);
+                    saveJobState(context, true);
+                } else {
+                    Log.w(TAG, "Failed to schedule system job (Result: " + result + ")");
+                    saveJobState(context, false);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error scheduling system job", e);
+        }
+    }
+
+    public static void scheduleAdaptiveSystemJob(Context context) {
+        try {
+            ComponentName component = new ComponentName(context, SystemJobService.class);
+
+            PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            // ИСПРАВЛЕНО: null-check для powerManager
+            boolean isPowerSaveMode = powerManager != null && powerManager.isPowerSaveMode();
+
+            long interval = isPowerSaveMode ? JOB_INTERVAL_MS * 2 : JOB_INTERVAL_MS;
+
+            JobInfo.Builder builder = new JobInfo.Builder(JOB_ID, component)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setPersisted(true)
+                    .setRequiresBatteryNotLow(true)
+                    .setRequiresCharging(true)
+                    .setPeriodic(interval, JOB_FLEX_MS);
+
+            JobInfo optimizedJob = ensureOEMCompatibility(context, builder.build());
+
+            JobScheduler jobScheduler =
+                    (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
+            if (jobScheduler != null) {
+                jobScheduler.schedule(optimizedJob);
+                Log.d(TAG, "Adaptive job scheduled, powerSave=" + isPowerSaveMode);
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error scheduling adaptive system job", e);
+        }
+    }
+
+    public static void displaySystemStatus(Context context) {
+        try {
+            SharedPreferences prefs = context.getSharedPreferences(PREF_JOB_STATE, Context.MODE_PRIVATE);
+            String status = prefs.getString("system_status", "Normal");
+
+            SystemMetrics metrics = new SystemMetrics(
+                    System.currentTimeMillis(), isSchedulerActive, isOEMOptimized.get());
+
+            Log.d(TAG, "System Status: " + status + " | " + metrics);
+
+            new Thread(() -> {
+                try {
+                    Thread.sleep(300000);
+                    scheduleSystemJob(context);
+                } catch (InterruptedException e) {
+                    Log.e(TAG, "Error in periodic status update", e);
+                    Thread.currentThread().interrupt();
+                }
+            }).start();
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error displaying system status", e);
+        }
+    }
+
+    // ИСПРАВЛЕНО: добавлен недостающий метод ensureOEMCompatibility
+    // (вызывался повсюду, но не был объявлен)
+    private static JobInfo ensureOEMCompatibility(Context context, JobInfo jobInfo) {
+        try {
+            checkOEMSettings(context);
+        } catch (Exception e) {
+            Log.w(TAG, "OEM compatibility check failed, using original job", e);
+        }
+        return jobInfo;
+    }
+
+    private static void ensureSystemCompatibility(Context context) {
+        try {
+            boolean isOEMActive = checkOEMSettings(context);
+            isOEMOptimized.set(isOEMActive);
+            updateSystemMetadata(context);
+        } catch (Exception e) {
+            Log.e(TAG, "Compatibility check failed", e);
+        }
+    }
+
+    private static boolean checkOEMSettings(Context context) {
+        try {
+            String brand = Build.MANUFACTURER.toLowerCase();
+            boolean isSupported = brand.contains("xiaomi") ||
+                    brand.contains("huawei") ||
+                    brand.contains("samsung");
+
+            if (isSupported) {
+                Log.d(TAG, "Detected OEM: " + brand);
+                applyOEMSpecificSettings(context);
+            }
+
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "OEM settings check with standard config");
+            return true;
+        }
+    }
+
+    private static void applyOEMSpecificSettings(Context context) {
+        try {
+            context.getSharedPreferences(PREF_JOB_STATE, Context.MODE_PRIVATE).edit()
+                    .putString("oem_settings_applied", "true")
+                    .putLong("oem_settings_timestamp", System.currentTimeMillis())
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error applying OEM settings", e);
+        }
+    }
+
+    private static void updateSystemMetadata(Context context) {
+        try {
+            SystemMetrics metrics = new SystemMetrics(
+                    System.currentTimeMillis(), isSchedulerActive, isOEMOptimized.get());
+
+            context.getSharedPreferences(PREF_JOB_STATE, Context.MODE_PRIVATE).edit()
+                    .putLong(KEY_LAST_EXECUTION, metrics.lastExecutionTime)
+                    .putBoolean(KEY_JOB_ENABLED, metrics.isSchedulerActive)
+                    .apply();
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating metadata", e);
+        }
+    }
+
+    private static void saveJobState(Context context, boolean isScheduled) {
+        try {
+            context.getSharedPreferences(PREF_JOB_STATE, Context.MODE_PRIVATE).edit()
+                    .putBoolean(KEY_JOB_ENABLED, isScheduled)
+                    .putLong(KEY_LAST_EXECUTION, System.currentTimeMillis())
+                    .putString(KEY_OEM_COMPATIBILITY,
+                            isOEMOptimized.get() ? "Optimized" : "Standard")
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving job state", e);
+        }
+    }
+
+    public static void resumeSystemJob(Context context) {
+        scheduleSystemJob(context);
+    }
+
+    public static void updateSchedulerState(boolean active) {
+        isSchedulerActive = active;
+    }
+
+    public static boolean isSchedulerActive() {
+        return isSchedulerActive;
+    }
+
+    public static class SystemMetrics {
+        public final long lastExecutionTime;
+        public final boolean isSchedulerActive;
+        public final boolean isOEMOptimized;
+
+        public SystemMetrics(long lastExecutionTime, boolean isSchedulerActive, boolean isOEMOptimized) {
+            this.lastExecutionTime = lastExecutionTime;
+            this.isSchedulerActive = isSchedulerActive;
+            this.isOEMOptimized = isOEMOptimized;
+        }
+
+        @Override
+        public String toString() {
+            return "SystemMetrics{lastExec=" + lastExecutionTime +
+                    ", active=" + isSchedulerActive +
+                    ", oem=" + isOEMOptimized + "}";
+        }
+    }
+}

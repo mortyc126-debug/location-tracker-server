@@ -1,0 +1,165 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.util.Log;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.UUID;
+
+public class DeviceIdManager {
+    private static final String TAG = "DeviceIdManager";
+    private static final String PREFS_NAME = "device_prefs";
+    private static final String KEY_DEVICE_ID = "device_id";
+    private static final String KEY_CREATED_AT = "device_created_at";
+    private static final String KEY_HW_SERIAL = "hw_serial";
+    private static final String KEY_SYNC_STATUS = "sync_status";
+
+    private static String cachedDeviceId = null;
+    private static long createdTimestamp = 0;
+
+    public interface DeviceIdListener {
+        void onDeviceIdChanged(String newId, boolean isSynced);
+        void onDeviceIdSynced(String serverId);
+    }
+
+    private static DeviceIdListener listener;
+
+    public static void setListener(DeviceIdListener deviceListener) {
+        listener = deviceListener;
+    }
+
+    public static String getDeviceId(Context context) {
+        if (cachedDeviceId != null) {
+            validateAndSyncId(context);
+            return cachedDeviceId;
+        }
+
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String storedId = prefs.getString(KEY_DEVICE_ID, null);
+        String storedSerial = prefs.getString(KEY_HW_SERIAL, null);
+        createdTimestamp = prefs.getLong(KEY_CREATED_AT, 0);
+
+        if (storedId == null || !isHardwareMatch(context, storedSerial)) {
+            cachedDeviceId = generateUniqueId(context);
+            // ИСПРАВЛЕНО: сохраняем текущий серийный номер, а не storedSerial (который null)
+            String currentSerial = getHardwareSerialNumber(context);
+
+            prefs.edit()
+                    .putString(KEY_DEVICE_ID, cachedDeviceId)
+                    .putString(KEY_HW_SERIAL, currentSerial) // ИСПРАВЛЕНО: currentSerial вместо storedSerial
+                    .putLong(KEY_CREATED_AT, System.currentTimeMillis())
+                    .putBoolean(KEY_SYNC_STATUS, false)
+                    .apply();
+
+            Log.d(TAG, "New Device ID: " + cachedDeviceId);
+            if (listener != null) listener.onDeviceIdChanged(cachedDeviceId, false);
+        } else {
+            cachedDeviceId = storedId; // ИСПРАВЛЕНО: присваиваем storedId в кэш (было пропущено)
+            Log.d(TAG, "Existing Device ID: " + storedId);
+        }
+
+        return cachedDeviceId;
+    }
+
+    private static boolean isHardwareMatch(Context context, String storedSerial) {
+        try {
+            String currentSerial = getHardwareSerialNumber(context);
+            return storedSerial != null && storedSerial.equals(currentSerial);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static String getHardwareSerialNumber(Context context) {
+        // ИСПРАВЛЕНО: Build.SERIAL устарел в Android 9+, используем корректный подход
+        String serial = null;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            serial = Build.SERIAL;
+        }
+
+        if (serial == null || "unknown".equalsIgnoreCase(serial)) {
+            try {
+                MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                byte[] hash = digest.digest(
+                        (Build.MODEL + Build.BOARD + Build.DEVICE).getBytes());
+                serial = bytesToHex(hash);
+            } catch (NoSuchAlgorithmException e) {
+                serial = UUID.randomUUID().toString();
+            }
+        }
+        return serial;
+    }
+
+    private static String generateUniqueId(Context context) {
+        try {
+            String hardwareId = getHardwareSerialNumber(context);
+            long timestamp = System.currentTimeMillis();
+            String androidId = Build.ID;
+
+            return "DEV-" + hardwareId.substring(0, Math.min(8, hardwareId.length())) +
+                    "-" + androidId.substring(0, Math.min(8, androidId.length())) +
+                    "-" + timestamp;
+        } catch (Exception e) {
+            Log.e(TAG, "Error generating unique ID", e);
+            return UUID.randomUUID().toString();
+        }
+    }
+
+    public static void resetDeviceId(Context context) {
+        try {
+            SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            String currentId = prefs.getString(KEY_DEVICE_ID, null);
+
+            prefs.edit()
+                    .remove(KEY_DEVICE_ID)
+                    .remove(KEY_HW_SERIAL)
+                    .remove(KEY_CREATED_AT)
+                    .remove(KEY_SYNC_STATUS)
+                    .apply();
+
+            cachedDeviceId = null;
+            String newId = getDeviceId(context);
+
+            if (!newId.equals(currentId)) {
+                Log.d(TAG, "Device ID reset: " + newId);
+                if (listener != null) listener.onDeviceIdChanged(newId, false);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to reset Device ID", e);
+        }
+    }
+
+    public static void syncDeviceId(Context context, String serverId) {
+        if (serverId == null || serverId.isEmpty()) return;
+
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        if (!prefs.getBoolean(KEY_SYNC_STATUS, false)) {
+            prefs.edit().putBoolean(KEY_SYNC_STATUS, true).apply();
+            Log.d(TAG, "Device ID synced: " + serverId);
+            if (listener != null) listener.onDeviceIdSynced(serverId);
+        }
+    }
+
+    private static void validateAndSyncId(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String storedId = prefs.getString(KEY_DEVICE_ID, null);
+        boolean isSynced = prefs.getBoolean(KEY_SYNC_STATUS, false);
+
+        if (cachedDeviceId != null && !cachedDeviceId.equals(storedId)) {
+            cachedDeviceId = storedId;
+            if (listener != null) listener.onDeviceIdChanged(cachedDeviceId, isSynced);
+        }
+    }
+
+    private static String bytesToHex(byte[] hash) {
+        StringBuilder hexString = new StringBuilder(2 * hash.length);
+        for (byte b : hash) {
+            String hex = Integer.toHexString(0xff & b);
+            if (hex.length() == 1) hexString.append('0');
+            hexString.append(hex);
+        }
+        return hexString.toString();
+    }
+}

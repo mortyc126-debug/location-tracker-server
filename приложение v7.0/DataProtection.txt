@@ -1,0 +1,212 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.content.SharedPreferences; // ИСПРАВЛЕНО: добавлен импорт
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
+import android.util.Log;
+
+// ИСПРАВЛЕНО: убран неиспользуемый импорт BuildConfig
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+import java.security.KeyStore;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+public class DataProtection {
+    private static final String TAG = "DataProtection";
+
+    private static final String KEYSTORE = "AndroidKeyStore";
+    private static final String KEY_ALIAS = "LocationTrackerKey";
+    private static final String KEY_VERSION_ALIAS = "KeyVersion";
+
+    private static final int KEY_SIZE = 256;
+    private static final String ALGORITHM = KeyProperties.KEY_ALGORITHM_AES;
+    private static final String BLOCK_MODE = KeyProperties.BLOCK_MODE_GCM;
+    // ИСПРАВЛЕНО: ENCRYPTION_PADDING_GCM_NO_TAG не существует
+    // Для GCM правильное значение — ENCRYPTION_PADDING_NONE
+    private static final String PADDING = KeyProperties.ENCRYPTION_PADDING_NONE;
+    private static final int IV_LENGTH = 12;
+
+    private static final AtomicLong currentKeyVersion = new AtomicLong(1);
+    private static final Map<String, Long> keyMetadata = new ConcurrentHashMap<>();
+    private static boolean isEncryptionEnabled = true;
+    private static long lastKeyRotationTime = 0L;
+
+    public static void generateKey() throws Exception {
+        KeyStore keyStore = KeyStore.getInstance(KEYSTORE);
+        keyStore.load(null);
+
+        if (!keyStore.containsAlias(KEY_ALIAS)) {
+            KeyGenerator keyGenerator = KeyGenerator.getInstance(
+                    KeyProperties.KEY_ALGORITHM_AES, KEYSTORE);
+            KeyGenParameterSpec spec = new KeyGenParameterSpec.Builder(
+                    KEY_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                    .setBlockModes(BLOCK_MODE)
+                    .setEncryptionPaddings(PADDING)
+                    .setKeySize(KEY_SIZE)
+                    .setUserAuthenticationRequired(false)
+                    .setRandomizedEncryptionRequired(true)
+                    .build();
+            keyGenerator.init(spec);
+            keyGenerator.generateKey();
+            saveKeyMetadata(KEY_ALIAS, System.currentTimeMillis());
+        }
+    }
+
+    public static byte[] encrypt(String data) throws Exception {
+        if (data == null || data.isEmpty()) return new byte[0];
+
+        KeyStore keyStore = KeyStore.getInstance(KEYSTORE);
+        keyStore.load(null);
+        SecretKey secretKey = (SecretKey) keyStore.getKey(KEY_ALIAS, null);
+        if (secretKey == null) throw new Exception("Encryption key not found");
+
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+
+        byte[] iv = cipher.getIV();
+        byte[] encryption = cipher.doFinal(data.getBytes("UTF-8"));
+
+        byte[] result = new byte[iv.length + encryption.length];
+        System.arraycopy(iv, 0, result, 0, iv.length);
+        System.arraycopy(encryption, 0, result, iv.length, encryption.length);
+        return result;
+    }
+
+    public static String decrypt(byte[] encryptedData) throws Exception {
+        if (encryptedData == null || encryptedData.length == 0) return "";
+
+        KeyStore keyStore = KeyStore.getInstance(KEYSTORE);
+        keyStore.load(null);
+        SecretKey secretKey = (SecretKey) keyStore.getKey(KEY_ALIAS, null);
+        if (secretKey == null) throw new Exception("Decryption key not found");
+
+        byte[] iv = new byte[IV_LENGTH];
+        byte[] cipherText = new byte[encryptedData.length - IV_LENGTH];
+        System.arraycopy(encryptedData, 0, iv, 0, IV_LENGTH);
+        System.arraycopy(encryptedData, IV_LENGTH, cipherText, 0, cipherText.length);
+
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, secretKey, new GCMParameterSpec(128, iv));
+        return new String(cipher.doFinal(cipherText), "UTF-8");
+    }
+
+    public static void rotateKey(Context context) throws Exception {
+        try {
+            long newVersion = currentKeyVersion.incrementAndGet();
+            lastKeyRotationTime = System.currentTimeMillis();
+            generateKey();
+            updateKeyMetadata(context, newVersion);
+        } catch (Exception e) {
+            Log.e(TAG, "Error during key rotation", e);
+        }
+    }
+
+    private static void saveKeyMetadata(String keyAlias, long timestamp) {
+        keyMetadata.put(keyAlias, timestamp);
+    }
+
+    private static void updateKeyMetadata(Context context, long newVersion) {
+        try {
+            context.getSharedPreferences("key_metadata", Context.MODE_PRIVATE).edit()
+                    .putLong(KEY_VERSION_ALIAS, newVersion)
+                    .putLong("last_rotation_time", lastKeyRotationTime)
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating key metadata", e);
+        }
+    }
+
+    public static long getKeyVersion() { return currentKeyVersion.get(); }
+    public static boolean isEncryptionActive() { return isEncryptionEnabled; }
+    public static void setEncryptionEnabled(boolean enabled) { isEncryptionEnabled = enabled; }
+
+    public static byte[] encryptConfiguration(Map<String, String> configuration) throws Exception {
+        StringBuilder configData = new StringBuilder();
+        for (Map.Entry<String, String> entry : configuration.entrySet())
+            configData.append(entry.getKey()).append("=").append(entry.getValue()).append(";");
+        return encrypt(configData.toString());
+    }
+
+    public static Map<String, String> decryptConfiguration(byte[] encryptedConfig) throws Exception {
+        String configData = decrypt(encryptedConfig);
+        Map<String, String> configuration = new HashMap<>();
+        if (!configData.isEmpty()) {
+            for (String entry : configData.split(";")) {
+                String[] kv = entry.split("=");
+                if (kv.length == 2) configuration.put(kv[0], kv[1]);
+            }
+        }
+        return configuration;
+    }
+
+    public static boolean validateDataIntegrity(byte[] encryptedData) {
+        if (encryptedData == null || encryptedData.length == 0) return false;
+        return calculateChecksum(encryptedData) > 0;
+    }
+
+    private static long calculateChecksum(byte[] data) {
+        long checksum = 0;
+        for (byte b : data) checksum += (b & 0xFF);
+        return checksum;
+    }
+
+    public static void saveEncryptedData(Context context, String key, byte[] encryptedData) {
+        try {
+            context.getSharedPreferences("encrypted_data", Context.MODE_PRIVATE).edit()
+                    .putString(key, Base64.encodeToString(encryptedData, Base64.NO_WRAP))
+                    .apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error saving encrypted data", e);
+        }
+    }
+
+    public static <T> T loadEncryptedData(Context context, String key, Class<T> clazz) {
+        try {
+            String encryptedString = context.getSharedPreferences("encrypted_data", Context.MODE_PRIVATE)
+                    .getString(key, null);
+            if (encryptedString == null) return null;
+            String decryptedData = decrypt(Base64.decode(encryptedString, Base64.NO_WRAP));
+            return parseEncryptedData(decryptedData, clazz);
+        } catch (Exception e) {
+            Log.e(TAG, "Error loading encrypted data", e);
+            return null;
+        }
+    }
+
+    private static <T> T parseEncryptedData(String data, Class<T> clazz) throws Exception {
+        return clazz.cast(data);
+    }
+
+    public static void initializeDataProtection(Context context) throws Exception {
+        generateKey();
+        rotateKey(context);
+        setEncryptionEnabled(true);
+    }
+
+    public static void clearEncryptedData(Context context) {
+        try {
+            context.getSharedPreferences("encrypted_data", Context.MODE_PRIVATE)
+                    .edit().clear().apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Error clearing encrypted data", e);
+        }
+    }
+
+    public static long getCurrentKeyVersion(Context context) {
+        try {
+            return context.getSharedPreferences("key_metadata", Context.MODE_PRIVATE)
+                    .getLong(KEY_VERSION_ALIAS, currentKeyVersion.get());
+        } catch (Exception e) {
+            return currentKeyVersion.get();
+        }
+    }
+}

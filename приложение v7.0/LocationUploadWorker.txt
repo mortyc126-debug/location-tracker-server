@@ -1,0 +1,162 @@
+package com.example.locationtracker;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+import androidx.work.BackoffPolicy;
+import androidx.work.Constraints;
+import androidx.work.ExistingWorkPolicy;
+import androidx.work.NetworkType;
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkManager;
+import androidx.work.Worker;
+import androidx.work.WorkerParameters;
+
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+public class LocationUploadWorker extends Worker {
+    private static final String TAG = "LocationUploadWorker";
+    private static final String PREF_PENDING = "pending_locations";
+    private static final int MAX_PENDING = 50;
+
+    public LocationUploadWorker(@NonNull Context context, @NonNull WorkerParameters params) {
+        super(context, params);
+    }
+
+    @NonNull
+    @Override
+    public Result doWork() {
+        Context ctx = getApplicationContext();
+        SharedPreferences pendingPrefs = ctx.getSharedPreferences(PREF_PENDING, Context.MODE_PRIVATE);
+        int count = pendingPrefs.getInt("count", 0);
+
+        if (!checkNetworkConnectivity(ctx)) {
+            Log.w(TAG, "Network check failed, deferring upload");
+            return Result.retry();
+        }
+
+        if (count <= 0) {
+            Log.d(TAG, "No pending entries");
+            return Result.success();
+        }
+
+        SharedPreferences main = ctx.getSharedPreferences("LocationTracker", Context.MODE_PRIVATE);
+        String deviceId = main.getString("device_id", "");
+        String deviceName = main.getString("device_name", "Unknown_Device");
+
+        if (deviceId.isEmpty()) {
+            Log.e(TAG, "Device ID empty, cannot upload");
+            return Result.failure();
+        }
+
+        NetworkClient client = new NetworkClient(ctx);
+        List<String> failedEntries = new ArrayList<>();
+        int successCount = 0;
+
+        try {
+            for (int i = 0; i < count; i++) {
+                String raw = pendingPrefs.getString("location_" + i, "");
+                if (raw.isEmpty()) continue;
+
+                try {
+                    LocationService.LocationData data = parseLocationData(raw);
+                    if (data == null) continue;
+
+                    boolean success = client.sendLocation(data, deviceId, deviceName);
+                    if (success) {
+                        successCount++;
+                        pendingPrefs.edit().remove("location_" + i).apply();
+                    } else {
+                        failedEntries.add(raw);
+                        break;
+                    }
+
+                } catch (Exception e) {
+                    Log.e(TAG, "Error processing entry " + i, e);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error during upload loop", e);
+            return Result.retry();
+        }
+
+        updatePendingEntries(pendingPrefs, failedEntries);
+        Log.d(TAG, "Upload: " + successCount + " sent, " + failedEntries.size() + " failed");
+
+        return failedEntries.size() > 0 ? Result.retry() : Result.success();
+    }
+
+    private boolean checkNetworkConnectivity(Context context) {
+        try {
+            ConnectivityManager cm =
+                    (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            // ИСПРАВЛЕНО: null-check для getActiveNetwork()
+            android.net.Network network = cm.getActiveNetwork();
+            if (network == null) return false;
+            NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+            return caps != null &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking connectivity", e);
+            return false;
+        }
+    }
+
+    private LocationService.LocationData parseLocationData(String raw) {
+        try {
+            JSONObject json = new JSONObject(raw);
+            // ИСПРАВЛЕНО: конструктор LocationData принимает 8 параметров
+            return new LocationService.LocationData(
+                    json.getDouble("latitude"),
+                    json.getDouble("longitude"),
+                    json.getLong("timestamp"),
+                    (float) json.optDouble("accuracy", -1.0),
+                    json.optInt("battery", -1),
+                    json.optString("wifi_info", ""),
+                    json.optString("device_type", "Mobile"),   // ИСПРАВЛЕНО: добавлен 7-й параметр
+                    json.optString("network_type", "Cellular") // ИСПРАВЛЕНО: добавлен 8-й параметр
+            );
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse location: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private void updatePendingEntries(SharedPreferences prefs, List<String> failedEntries) {
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.clear();
+        int maxEntries = Math.min(failedEntries.size(), MAX_PENDING);
+        for (int i = 0; i < maxEntries; i++) {
+            editor.putString("location_" + i, failedEntries.get(i));
+        }
+        editor.putInt("count", maxEntries).apply();
+    }
+
+    public static void enqueueUpload(Context context) {
+        Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiresCharging(false)
+                .build();
+
+        OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(LocationUploadWorker.class)
+                .setConstraints(constraints)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .build();
+
+        WorkManager.getInstance(context)
+                .enqueueUniqueWork("location_upload", ExistingWorkPolicy.REPLACE, request);
+
+        Log.d(TAG, "Upload work enqueued");
+    }
+}
